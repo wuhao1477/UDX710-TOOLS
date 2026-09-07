@@ -17,11 +17,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y nodejs gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
           corepack enable
+          corepack prepare pnpm@10.6.5 --activate
 
       - name: build web
         run: |
           cd web
-          pnpm install --lockfile=false --ignore-scripts
+          pnpm install --lockfile=false
           pnpm run build
 
       - name: build server
