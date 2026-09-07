@@ -6,7 +6,7 @@ BASE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SERVER="$BASE_DIR/server"
 WATCHER="$BASE_DIR/rj45_bridge_watch.sh"
 SERVER_PID="/tmp/udx710-tools.pid"
-WATCHER_PID="/tmp/udx710-rj45-bridge.pid"
+WATCHER_PID="/tmp/udx710-rj45-daemon.pid"
 
 if [ ! -x "$SERVER" ]; then
     echo "server not found or not executable: $SERVER" >&2
