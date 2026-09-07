@@ -38,11 +38,19 @@ static void test_unsupported_typec_switch(void) {
          DEVICE_USB_SWITCHABLE_GENERIC);
 }
 
+static void test_link_state_parsing(void) {
+  assert(device_profile_parse_link_state("1", "up") == 1);
+  assert(device_profile_parse_link_state("0", "down") == 0);
+  assert(device_profile_parse_link_state("", "up") == 1);
+  assert(device_profile_parse_link_state("0", "unknown") == 0);
+}
+
 int main(void) {
   test_hostapd_wlan1();
   test_led_fallback();
   test_data_interface_priority();
   test_current_typec_rndis();
   test_unsupported_typec_switch();
+  test_link_state_parsing();
   return 0;
 }

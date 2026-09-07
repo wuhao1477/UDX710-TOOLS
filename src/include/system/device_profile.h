@@ -19,6 +19,7 @@ typedef struct {
   int battery_supported;
   int rj45_physical_present;
   int rj45_interface_present;
+  int rj45_link_up;
   int rj45_usable;
   int typec_present;
   int typec_host_capable;
@@ -52,6 +53,7 @@ int device_profile_select_data_iface(const char *const *names, size_t count,
 DeviceUsbMode device_profile_classify_usb(const char *vid, const char *pid,
                                           const char *const *functions,
                                           size_t count);
+int device_profile_parse_link_state(const char *carrier, const char *operstate);
 
 #ifdef __cplusplus
 }

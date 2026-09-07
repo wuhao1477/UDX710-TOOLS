@@ -114,6 +114,7 @@ void handle_info(struct mg_connection *c, struct mg_http_message *hm) {
 void handle_capabilities(struct mg_connection *c, struct mg_http_message *hm) {
   HTTP_CHECK_GET(c, hm);
 
+  device_profile_refresh();
   const DeviceProfile *profile = device_profile_get();
   mg_http_reply(
       c, 200, HTTP_CORS_HEADERS,
@@ -121,7 +122,8 @@ void handle_capabilities(struct mg_connection *c, struct mg_http_message *hm) {
       "\"wifi\":{\"interface\":\"%s\",\"config\":\"%s\"},"
       "\"cellular\":{\"interface\":\"%s\"},"
       "\"rj45\":{\"physical_present\":%s,\"interface_present\":%s,"
-      "\"usable\":%s,\"reason\":\"%s\"},"
+      "\"link_up\":%s,\"usable\":%s,\"interface\":\"%s\","
+      "\"reason\":\"%s\"},"
       "\"typec\":{\"present\":%s,\"host_capable\":%s,"
       "\"gadget_vid\":\"%s\",\"gadget_pid\":\"%s\","
       "\"rndis\":%s,\"mode_switch_supported\":%s},"
@@ -131,7 +133,9 @@ void handle_capabilities(struct mg_connection *c, struct mg_http_message *hm) {
       profile->wifi_iface, profile->wifi_config, profile->data_iface,
       profile->rj45_physical_present ? "true" : "false",
       profile->rj45_interface_present ? "true" : "false",
-      profile->rj45_usable ? "true" : "false", profile->reason_rj45,
+      profile->rj45_link_up ? "true" : "false",
+      profile->rj45_usable ? "true" : "false", profile->rj45_iface,
+      profile->reason_rj45,
       profile->typec_present ? "true" : "false",
       profile->typec_host_capable ? "true" : "false", profile->usb_vid,
       profile->usb_pid, profile->usb_rndis_available ? "true" : "false",

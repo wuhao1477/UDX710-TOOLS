@@ -350,7 +350,10 @@ let refreshInterval = null
 
 function startRefreshInterval() {
   if (refreshInterval) return
-  refreshInterval = setInterval(fetchSystemInfo, 30000)
+  refreshInterval = setInterval(() => {
+    fetchSystemInfo()
+    fetchCapabilities()
+  }, 30000)
 }
 
 function stopRefreshInterval() {

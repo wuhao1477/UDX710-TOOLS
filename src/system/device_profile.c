@@ -155,6 +155,13 @@ DeviceUsbMode device_profile_classify_usb(const char *vid, const char *pid,
   return DEVICE_USB_UNKNOWN;
 }
 
+int device_profile_parse_link_state(const char *carrier,
+                                    const char *operstate) {
+  if (carrier && strcmp(carrier, "1") == 0) return 1;
+  if (carrier && strcmp(carrier, "0") == 0) return 0;
+  return operstate && strcmp(operstate, "up") == 0;
+}
+
 static int read_line(const char *path, char *out, size_t out_size) {
   FILE *file = fopen(path, "r");
   if (!file) {
@@ -167,6 +174,39 @@ static int read_line(const char *path, char *out, size_t out_size) {
   fclose(file);
   out[strcspn(out, "\r\n")] = '\0';
   return 0;
+}
+
+static int interface_link_up(const char *name) {
+  char path[256];
+  char carrier[16] = {0};
+  char operstate[16] = {0};
+  snprintf(path, sizeof(path), "%s/%s/carrier", NET_ROOT, name);
+  read_line(path, carrier, sizeof(carrier));
+  snprintf(path, sizeof(path), "%s/%s/operstate", NET_ROOT, name);
+  read_line(path, operstate, sizeof(operstate));
+  return device_profile_parse_link_state(carrier, operstate);
+}
+
+static int select_rj45_runtime(const char *const *names, size_t count,
+                               char *out, size_t out_size) {
+  const char *fallback = NULL;
+  for (size_t i = 0; i < count; i++) {
+    if (!has_prefix(names[i], "eth") && !has_prefix(names[i], "en") &&
+        !has_prefix(names[i], "lan")) {
+      continue;
+    }
+    if (!fallback) fallback = names[i];
+    if (interface_link_up(names[i])) {
+      copy_text(out, out_size, names[i]);
+      return 0;
+    }
+  }
+  if (fallback) {
+    copy_text(out, out_size, fallback);
+    return 0;
+  }
+  copy_text(out, out_size, "");
+  return -1;
 }
 
 static int directory_has_entry(const char *path, const char *wanted) {
@@ -201,19 +241,6 @@ static size_t list_directory(const char *path, char names[][64], size_t limit) {
   }
   closedir(dir);
   return count;
-}
-
-static int select_rj45_iface(const char *const *names, size_t count, char *out,
-                             size_t out_size) {
-  for (size_t i = 0; i < count; i++) {
-    if (has_prefix(names[i], "eth") || has_prefix(names[i], "en") ||
-        has_prefix(names[i], "lan")) {
-      copy_text(out, out_size, names[i]);
-      return 0;
-    }
-  }
-  copy_text(out, out_size, "");
-  return -1;
 }
 
 static int modem_declares_ethernet(void) {
@@ -346,16 +373,20 @@ int device_profile_refresh(void) {
   }
   device_profile_select_data_iface(name_ptrs, net_count, profile.data_iface,
                                    sizeof(profile.data_iface));
-  if (select_rj45_iface(name_ptrs, net_count, profile.rj45_iface,
-                        sizeof(profile.rj45_iface)) == 0) {
+  if (select_rj45_runtime(name_ptrs, net_count, profile.rj45_iface,
+                          sizeof(profile.rj45_iface)) == 0) {
     profile.rj45_interface_present = 1;
+    profile.rj45_link_up = interface_link_up(profile.rj45_iface);
   }
 
   profile.rj45_physical_present = modem_declares_ethernet();
   profile.rj45_usable = profile.rj45_interface_present ||
                         access("/dev/seth_lte", F_OK) == 0;
-  if (profile.rj45_usable) {
-    copy_text(profile.reason_rj45, sizeof(profile.reason_rj45), "有线接口可用");
+  if (profile.rj45_usable && profile.rj45_link_up) {
+    copy_text(profile.reason_rj45, sizeof(profile.reason_rj45), "有线接口已连接");
+  } else if (profile.rj45_usable) {
+    copy_text(profile.reason_rj45, sizeof(profile.reason_rj45),
+              "有线接口已识别，当前未连接");
   } else if (profile.rj45_physical_present) {
     copy_text(profile.reason_rj45, sizeof(profile.reason_rj45),
               "物理 RJ45 存在，但当前固件没有 eth*/en*/lan* 或 /dev/seth_lte");

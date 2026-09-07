@@ -165,7 +165,7 @@ onUnmounted(() => {
       <div class="rounded-2xl bg-white/95 dark:bg-white/5 border border-slate-200/60 dark:border-white/10 p-4">
         <p class="text-slate-500 dark:text-white/50 text-xs">RJ45</p>
         <p class="font-semibold text-slate-900 dark:text-white">
-          {{ capabilities.rj45?.usable ? '可用' : '物理存在，系统侧不可用' }}
+          {{ capabilities.rj45?.link_up ? '已连接' : capabilities.rj45?.usable ? '已识别，未连接' : '物理存在，系统侧不可用' }}
         </p>
       </div>
       <div class="rounded-2xl bg-white/95 dark:bg-white/5 border border-slate-200/60 dark:border-white/10 p-4">
