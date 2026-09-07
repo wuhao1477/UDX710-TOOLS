@@ -15,14 +15,18 @@
 #include "exec_utils.h"
 #include "database.h"  /* 使用数据库配置函数 */
 #include "airplane.h"  /* 飞行模式控制 */
+#include "device_profile.h"
 #include "http_utils.h"
 #include "json_builder.h"
 
 #define VNSTAT_DB "/var/lib/vnstat/vnstat.db"
-#define NETWORK_IFACE "sipa_eth0"
-
 static int is_flow_control_running = 0;
 static pthread_t flow_control_thread;
+
+static const char *traffic_iface(void) {
+    const DeviceProfile *profile = device_profile_get();
+    return profile->data_iface;
+}
 
 /* 流量配置 */
 typedef struct {
@@ -51,8 +55,11 @@ static void get_traffic_from_vnstat(long long *rx, long long *tx) {
     *rx = 0;
     *tx = 0;
 
+    if (traffic_iface()[0] == '\0') {
+        return;
+    }
     if (run_command(output, sizeof(output), "/home/root/6677/vnstat", 
-                    "-i", NETWORK_IFACE, "--json", NULL) != 0) {
+                    "-i", traffic_iface(), "--json", NULL) != 0) {
         return;
     }
 
@@ -104,10 +111,14 @@ static void *flow_control_thread_func(void *arg) {
 static void init_vnstat_db(void) {
     struct stat st;
     char output[256];
+    if (traffic_iface()[0] == '\0') {
+        printf("[traffic] 未检测到蜂窝数据接口，跳过 vnstat 初始化\n");
+        return;
+    }
     if (stat(VNSTAT_DB, &st) != 0) {
         run_command(output, sizeof(output), "/home/root/6677/vnstatd", "--initdb", NULL);
         char cmd[256];
-        snprintf(cmd, sizeof(cmd), "/home/root/6677/vnstat --add -i %s", NETWORK_IFACE);
+        snprintf(cmd, sizeof(cmd), "/home/root/6677/vnstat --add -i %s", traffic_iface());
         run_command(output, sizeof(output), "sh", "-c", cmd, NULL);
     }
     run_command(output, sizeof(output), "/home/root/6677/vnstatd", "--noadd", "--config", "/home/root/6677/vnstatd.conf", "-d", NULL);

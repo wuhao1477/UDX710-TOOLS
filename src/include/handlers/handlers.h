@@ -22,6 +22,17 @@ void handle_device_control(struct mg_connection *c, struct mg_http_message *hm);
 void handle_clear_cache(struct mg_connection *c, struct mg_http_message *hm);
 void handle_get_current_band(struct mg_connection *c,
                              struct mg_http_message *hm);
+void handle_capabilities(struct mg_connection *c, struct mg_http_message *hm);
+
+/* WiFi API */
+void handle_wifi_status(struct mg_connection *c, struct mg_http_message *hm);
+void handle_wifi_config(struct mg_connection *c, struct mg_http_message *hm);
+void handle_wifi_enable(struct mg_connection *c, struct mg_http_message *hm);
+void handle_wifi_disable(struct mg_connection *c, struct mg_http_message *hm);
+void handle_wifi_band(struct mg_connection *c, struct mg_http_message *hm);
+void handle_wifi_clients(struct mg_connection *c, struct mg_http_message *hm);
+void handle_wifi_blacklist(struct mg_connection *c, struct mg_http_message *hm);
+void handle_wifi_whitelist(struct mg_connection *c, struct mg_http_message *hm);
 
 /* 短信 API */
 void handle_sms_list(struct mg_connection *c, struct mg_http_message *hm);

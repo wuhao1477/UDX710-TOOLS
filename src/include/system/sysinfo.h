@@ -27,6 +27,8 @@ typedef struct {
     char signal_strength[64];
     double thermal_temp;          /* Celsius */
     char power_status[32];
+    char power_source[16];
+    int battery_supported;
     char battery_health[32];
     unsigned int battery_capacity;
     char ssid[64];

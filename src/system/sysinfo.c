@@ -11,6 +11,7 @@
 #include <glib.h>
 #include "sysinfo.h"
 #include "dbus_core.h"
+#include "device_profile.h"
 #include "exec_utils.h"
 #include "ofono.h"
 
@@ -54,7 +55,20 @@ double get_uptime(void) {
 
 int get_serial(char *serial, size_t size) {
     char buf[1024];
-    if (read_file("/home/cpuinfo", buf, sizeof(buf)) != 0) return -1;
+    int has_cpuinfo = read_file("/home/cpuinfo", buf, sizeof(buf)) == 0;
+    if (!has_cpuinfo &&
+        read_file("/proc/device-tree/serial-number", buf, sizeof(buf)) == 0) {
+        snprintf(serial, size, "%s", buf);
+        return serial[0] ? 0 : -1;
+    }
+    if (!has_cpuinfo && read_file("/proc/device-tree/model", buf,
+                                  sizeof(buf)) == 0) {
+        snprintf(serial, size, "%s", buf);
+        return serial[0] ? 0 : -1;
+    }
+    if (!has_cpuinfo) {
+        return -1;
+    }
 
     char *p = strstr(buf, "Serial");
     if (!p) return -1;
@@ -142,6 +156,7 @@ extern int get_airplane_mode(void);
 int get_system_info(SystemInfo *info) {
     struct utsname uts;
     char buf[256];
+    const DeviceProfile *profile = device_profile_get();
 
     /* 初始化默认值 */
     memset(info, 0, sizeof(SystemInfo));
@@ -154,6 +169,9 @@ int get_system_info(SystemInfo *info) {
     strcpy(info->sim_slot, "N/A");
     strcpy(info->signal_strength, "N/A");
     strcpy(info->power_status, "N/A");
+    strcpy(info->power_source,
+           profile->battery_supported ? "battery" : "external");
+    info->battery_supported = profile->battery_supported;
     strcpy(info->battery_health, "N/A");
     strcpy(info->ssid, "N/A");
     strcpy(info->passwd, "N/A");
@@ -194,19 +212,29 @@ int get_system_info(SystemInfo *info) {
     info->thermal_temp = get_thermal_temp();
 
     /* 电源状态 */
-    if (read_file("/sys/class/power_supply/battery/status", buf, sizeof(buf)) == 0) {
+    if (!profile->battery_supported) {
+        strncpy(info->power_status, "External power",
+                sizeof(info->power_status) - 1);
+        strncpy(info->battery_health, "Not present",
+                sizeof(info->battery_health) - 1);
+    } else if (read_file("/sys/class/power_supply/battery/status", buf,
+                         sizeof(buf)) == 0) {
         buf[strcspn(buf, "\n")] = '\0';
         strncpy(info->power_status, buf, sizeof(info->power_status) - 1);
     }
 
     /* 电池健康 */
-    if (read_file("/sys/class/power_supply/battery/health", buf, sizeof(buf)) == 0) {
+    if (profile->battery_supported &&
+        read_file("/sys/class/power_supply/battery/health", buf,
+                  sizeof(buf)) == 0) {
         buf[strcspn(buf, "\n")] = '\0';
         strncpy(info->battery_health, buf, sizeof(info->battery_health) - 1);
     }
 
     /* 电池容量 */
-    if (read_file("/sys/class/power_supply/battery/capacity", buf, sizeof(buf)) == 0) {
+    if (profile->battery_supported &&
+        read_file("/sys/class/power_supply/battery/capacity", buf,
+                  sizeof(buf)) == 0) {
         info->battery_capacity = atoi(buf);
     }
 

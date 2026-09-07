@@ -53,6 +53,16 @@ static const char *get_current_modem_path(void) {
   return g_modem_path;
 }
 
+int ofono_get_current_modem_path(char *path, size_t size) {
+  const char *current;
+  if (!path || size == 0) {
+    return -1;
+  }
+  current = get_current_modem_path();
+  snprintf(path, size, "%s", current);
+  return path[0] ? 0 : -1;
+}
+
 /* 设置错误信息 */
 static void set_error(const char *fmt, ...) {
   va_list args;

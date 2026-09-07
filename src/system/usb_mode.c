@@ -18,6 +18,7 @@
 #include <errno.h>
 #include "mongoose.h"
 #include "usb_mode.h"
+#include "device_profile.h"
 #include "http_utils.h"
 #include "json_builder.h"
 
@@ -99,6 +100,10 @@ int usb_mode_get(void) {
 
 /* 设置USB模式 */
 int usb_mode_set(int mode, int permanent) {
+    if (!device_profile_get()->usb_mode_switch_supported) {
+        printf("[usb_mode] 当前设备只允许读取 Type-C RNDIS 状态\n");
+        return -2;
+    }
     if (mode < USB_MODE_CDC_NCM || mode > USB_MODE_RNDIS) {
         printf("[usb_mode] 无效的模式值: %d\n", mode);
         return -1;
@@ -134,9 +139,16 @@ void handle_usb_mode_get(struct mg_connection *c, struct mg_http_message *hm) {
         mode = usb_mode_get_current_hardware();
     }
     
-    /* 如果仍然无法获取，默认为 RNDIS (3) */
+    /* 当前 gadget 能力未知时，不猜测 USB 模式 */
     if (mode <= 0) {
-        mode = USB_MODE_RNDIS;
+        JsonBuilder *j = json_new();
+        json_obj_open(j);
+        json_add_int(j, "Code", 1);
+        json_add_str(j, "Error", "无法识别当前 Type-C gadget");
+        json_add_null(j, "Data");
+        json_obj_close(j);
+        HTTP_OK_FREE(c, json_finish(j));
+        return;
     }
     
     const char *mode_name = usb_mode_name(mode);
@@ -206,7 +218,10 @@ void handle_usb_mode_set(struct mg_connection *c, struct mg_http_message *hm) {
         JsonBuilder *j = json_new();
         json_obj_open(j);
         json_add_int(j, "Code", 1);
-        json_add_str(j, "Error", "设置模式失败");
+        json_add_str(j, "Error",
+                     device_profile_get()->usb_mode_switch_supported
+                         ? "设置模式失败"
+                         : "当前设备不支持通用 USB 模式切换");
         json_add_null(j, "Data");
         json_obj_close(j);
         HTTP_OK_FREE(c, json_finish(j));
@@ -405,6 +420,7 @@ static void configure_usb_network(void) {
     /* 2. 查找并配置 USB 网络接口 */
     const char *ifaces[] = {"usb0", "rndis0", NULL};
     char cmd[256];
+    const DeviceProfile *profile = device_profile_get();
     
     for (int retry = 0; retry < 5; retry++) {
         for (int i = 0; ifaces[i]; i++) {
@@ -426,7 +442,11 @@ static void configure_usb_network(void) {
                 run_cmd(cmd);
                 
                 /* 配置 iptables NAT */
-                run_cmd("iptables -t nat -A POSTROUTING -o rmnet_data0 -j MASQUERADE 2>/dev/null");
+                char nat_cmd[256];
+                snprintf(nat_cmd, sizeof(nat_cmd),
+                         "iptables -t nat -A POSTROUTING -o %s -j MASQUERADE 2>/dev/null",
+                         profile->data_iface[0] ? profile->data_iface : "rmnet_data0");
+                run_cmd(nat_cmd);
                 snprintf(cmd, sizeof(cmd), "iptables -A FORWARD -i %s -j ACCEPT 2>/dev/null", ifaces[i]);
                 run_cmd(cmd);
                 
@@ -477,6 +497,10 @@ static int create_multi_function_links(const UsbModeConfig *cfg) {
 
 /* USB 模式热切换 */
 int usb_mode_switch_advanced(int mode) {
+    if (!device_profile_get()->usb_mode_switch_supported) {
+        printf("[usb_mode] 当前设备不支持通用 USB 热切换\n");
+        return -4;
+    }
     if (mode < 1 || mode > 3) {
         printf("[usb_mode] 无效模式: %d\n", mode);
         return -1;
@@ -573,6 +597,12 @@ int usb_mode_switch_advanced(int mode) {
 
 /* 获取当前硬件 USB 模式 */
 int usb_mode_get_current_hardware(void) {
+    const DeviceProfile *profile = device_profile_get();
+    if (profile->usb_rndis_available &&
+        strcmp(profile->usb_vid, "0x2dee") == 0 &&
+        strcmp(profile->usb_pid, "0x4d51") == 0) {
+        return USB_MODE_RNDIS;
+    }
     char vid[32] = {0}, pid[32] = {0};
     char path[256];
     
@@ -594,6 +624,11 @@ int usb_mode_get_current_hardware(void) {
 /* POST /api/usb-advance - USB 热切换 */
 void handle_usb_advance(struct mg_connection *c, struct mg_http_message *hm) {
     HTTP_CHECK_POST(c, hm);
+
+    if (!device_profile_get()->usb_mode_switch_supported) {
+        HTTP_ERROR(c, 409, "当前设备不支持通用 USB 热切换");
+        return;
+    }
     
     double mode_val = 0;
     if (!mg_json_get_num(hm->body, "$.mode", &mode_val)) {

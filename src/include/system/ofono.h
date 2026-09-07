@@ -7,6 +7,7 @@
 #define OFONO_H
 
 #include <gio/gio.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -49,6 +50,14 @@ int ofono_network_get_mode_sync(const char* modem_path, char* buffer, int size, 
  * @return 数据卡路径字符串，需要调用 g_free 释放，失败返回 NULL
  */
 char* ofono_get_datacard(void);
+
+/**
+ * 获取当前在线数据 modem 路径
+ * @param path 输出路径
+ * @param size 输出缓冲区大小
+ * @return 成功返回0，失败返回-1
+ */
+int ofono_get_current_modem_path(char *path, size_t size);
 
 /**
  * 设置网络模式

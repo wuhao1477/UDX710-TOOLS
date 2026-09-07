@@ -9,9 +9,11 @@
 #include "auth.h"
 #include "charge.h"
 #include "dbus_core.h"
+#include "factory_reset.h"
 #include "handlers.h"
 #include "http_utils.h"
 #include "mongoose.h"
+#include "led.h"
 #include "netif.h"
 #include "reboot.h"
 #include "sms.h"
@@ -64,6 +66,8 @@ static int is_auth_whitelist(const char *uri, const char *method,
     if (strncmp(uri, "/api/charge/config", 18) == 0)
       return 1;
     if (strncmp(uri, "/api/current_band", 17) == 0)
+      return 1;
+    if (strncmp(uri, "/api/capabilities", 17) == 0)
       return 1;
   }
 
@@ -175,6 +179,8 @@ static void http_handler(struct mg_connection *c, int ev, void *ev_data) {
       handle_clear_cache(c, hm);
     } else if (mg_match(hm->uri, mg_str("/api/current_band"), NULL)) {
       handle_get_current_band(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/capabilities"), NULL)) {
+      handle_capabilities(c, hm);
     }
     /* 高级网络 API */
     else if (mg_match(hm->uri, mg_str("/api/bands"), NULL)) {
@@ -253,6 +259,38 @@ static void http_handler(struct mg_connection *c, int ev, void *ev_data) {
       }
     } else if (mg_match(hm->uri, mg_str("/api/sms/*"), NULL)) {
       handle_sms_delete(c, hm);
+    }
+    /* LED 控制 API */
+    else if (mg_match(hm->uri, mg_str("/api/led/status"), NULL)) {
+      handle_led_status(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/led/control"), NULL)) {
+      handle_led_control(c, hm);
+    }
+    /* WiFi 控制 API */
+    else if (mg_match(hm->uri, mg_str("/api/wifi/status"), NULL)) {
+      handle_wifi_status(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/wifi/config"), NULL)) {
+      handle_wifi_config(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/wifi/enable"), NULL)) {
+      handle_wifi_enable(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/wifi/disable"), NULL)) {
+      handle_wifi_disable(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/wifi/band"), NULL)) {
+      handle_wifi_band(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/wifi/clients"), NULL)) {
+      handle_wifi_clients(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/wifi/blacklist/*"), NULL)) {
+      handle_wifi_blacklist(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/wifi/blacklist"), NULL)) {
+      handle_wifi_blacklist(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/wifi/whitelist/*"), NULL)) {
+      handle_wifi_whitelist(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/wifi/whitelist"), NULL)) {
+      handle_wifi_whitelist(c, hm);
+    }
+    /* 恢复出厂设置 API */
+    else if (mg_match(hm->uri, mg_str("/api/factory-reset"), NULL)) {
+      handle_factory_reset(c, hm);
     }
     /* OTA更新 API */
     else if (mg_match(hm->uri, mg_str("/api/update/version"), NULL)) {
