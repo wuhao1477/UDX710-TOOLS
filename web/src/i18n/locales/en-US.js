@@ -61,7 +61,6 @@ export default {
     network: 'Network',
     wifi: 'WiFi',
     devices: 'Clients',
-    adb: 'ADB Management',
     netif: 'Interfaces',
     apn: 'APN Config',
     advanced: 'Advanced',

@@ -5,7 +5,6 @@ import SystemMonitor from './components/SystemMonitor.vue'
 import NetworkManager from './components/NetworkManager.vue'
 import WifiManager from './components/WifiManager.vue'
 import DeviceManager from './components/DeviceManager.vue'
-import AdbManager from './components/AdbManager.vue'
 import AdvancedNetwork from './components/AdvancedNetwork.vue'
 import SmsManager from './components/SmsManager.vue'
 import TrafficStats from './components/TrafficStats.vue'
@@ -300,7 +299,6 @@ const menuItems = [
   { id: 'network', labelKey: 'menu.network', icon: 'fa-network-wired', color: 'from-purple-500 to-pink-400' },
   { id: 'wifi', labelKey: 'menu.wifi', icon: 'fa-wifi', color: 'from-indigo-500 to-purple-400' },
   { id: 'devices', labelKey: 'menu.devices', icon: 'fa-users', color: 'from-cyan-500 to-blue-400' },
-  { id: 'adb', labelKey: 'menu.adb', icon: 'fa-terminal', color: 'from-sky-500 to-indigo-400' },
   { id: 'netif', labelKey: 'menu.netif', icon: 'fa-ethernet', color: 'from-teal-500 to-cyan-400' },
   { id: 'apn', labelKey: 'menu.apn', icon: 'fa-globe', color: 'from-teal-500 to-cyan-400' },
   { id: 'advanced', labelKey: 'menu.advanced', icon: 'fa-tower-cell', color: 'from-cyan-500 to-blue-500' },
@@ -702,7 +700,6 @@ onUnmounted(() => {
           <NetworkManager v-else-if="activeMenu === 'network'" key="network" />
           <WifiManager v-else-if="activeMenu === 'wifi'" key="wifi" />
           <DeviceManager v-else-if="activeMenu === 'devices'" key="devices" />
-          <AdbManager v-else-if="activeMenu === 'adb'" key="adb" />
           <AdvancedNetwork v-else-if="activeMenu === 'advanced'" key="advanced" />
           <SmsManager v-else-if="activeMenu === 'sms'" key="sms" />
           <TrafficStats v-else-if="activeMenu === 'traffic'" key="traffic" />

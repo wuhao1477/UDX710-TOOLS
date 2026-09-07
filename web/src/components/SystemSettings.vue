@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { deviceControl, getRebootConfig, setReboot, clearReboot, getSystemTime, syncSystemTime, useApi, authChangePassword, getSecurityQuestions, securityFactoryReset } from '../composables/useApi'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
+import AdbManager from './AdbManager.vue'
 
 const { t } = useI18n()
 const { success, error } = useToast()
@@ -412,6 +413,9 @@ onUnmounted(() => {
         </label>
       </div>
     </div>
+
+    <!-- ADB 管理 -->
+    <AdbManager />
 
     <!-- 定时重启 -->
     <div class="rounded-2xl bg-white/95 dark:bg-white/5 backdrop-blur border border-slate-200/60 dark:border-white/10 p-6 shadow-lg shadow-slate-200/40 dark:shadow-black/20 hover:shadow-xl hover:shadow-slate-300/50 dark:hover:shadow-black/30 transition-all duration-300">

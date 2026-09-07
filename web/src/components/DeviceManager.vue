@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted, inject } from 'vue'
 import { useToast } from '../composables/useToast'
 import { 
   getWifiClients, getWifiBlacklist, getWifiWhitelist,
+  lookupMacVendor,
   addToWifiBlacklist, addToWifiWhitelist,
   removeFromWifiBlacklist, removeFromWifiWhitelist,
   clearWifiBlacklist, clearWifiWhitelist
@@ -22,8 +23,44 @@ const tabs = [
 const clients = ref([])
 const blacklist = ref([])
 const whitelist = ref([])
+const vendorByOui = ref(loadVendorCache())
 const loading = ref(false)
 const expandedMac = ref(null)
+
+function loadVendorCache() {
+  try {
+    return JSON.parse(localStorage.getItem('udx710_oui_vendor_cache') || '{}')
+  } catch {
+    return {}
+  }
+}
+
+function macToOui(mac) {
+  const normalized = String(mac || '').toUpperCase().replace(/-/g, ':')
+  if (!/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(normalized)) return null
+  if ((parseInt(normalized.slice(0, 2), 16) & 2) !== 0) return null
+  return normalized.slice(0, 8)
+}
+
+function vendorLabel(mac) {
+  const oui = macToOui(mac)
+  if (!oui) return '随机 MAC'
+  return vendorByOui.value[oui] || '查询中…'
+}
+
+async function loadVendors(devices) {
+  const ouis = [...new Set(devices.map(device => macToOui(device.mac)).filter(Boolean))]
+  const pending = ouis.filter(oui => !vendorByOui.value[oui])
+  await Promise.all(pending.map(async oui => {
+    try {
+      const result = await lookupMacVendor(oui)
+      vendorByOui.value[oui] = result.company || '未知厂商'
+    } catch {
+      vendorByOui.value[oui] = '未知厂商'
+    }
+  }))
+  localStorage.setItem('udx710_oui_vendor_cache', JSON.stringify(vendorByOui.value))
+}
 
 const filteredDevices = computed(() => {
   if (activeTab.value === 'all') {
@@ -79,6 +116,7 @@ async function loadData() {
     clients.value = Array.isArray(clientsRes) ? clientsRes : (clientsRes.clients || [])
     blacklist.value = Array.isArray(blacklistRes) ? blacklistRes : (blacklistRes.blacklist || [])
     whitelist.value = Array.isArray(whitelistRes) ? whitelistRes : (whitelistRes.whitelist || [])
+    loadVendors(clients.value)
   } catch (e) {
     clients.value = []
     error(e.message || '获取接入设备失败')
@@ -214,6 +252,7 @@ onUnmounted(() => {
                   <font-awesome-icon icon="laptop" class="text-blue-500 text-sm" />
                 </div>
                 <span class="font-mono text-slate-900 dark:text-white text-sm">{{ device.mac }}</span>
+                <span class="block text-xs text-slate-400">{{ vendorLabel(device.mac) }}</span>
               </div>
             </td>
             <td class="py-3 px-4">
@@ -282,6 +321,7 @@ onUnmounted(() => {
               <font-awesome-icon icon="laptop" class="text-blue-500" />
             </div>
           <p class="font-mono text-slate-900 dark:text-white text-sm font-medium">{{ device.mac }}</p>
+          <p class="text-xs text-slate-500 dark:text-white/50">{{ vendorLabel(device.mac) }}</p>
           <p class="text-xs text-blue-500">{{ accessTypeLabel(device.access_type) }} · {{ deviceIps(device) }}</p>
           </div>
           <font-awesome-icon :icon="expandedMac === device.mac ? 'chevron-up' : 'chevron-down'" class="text-slate-400 dark:text-white/40 text-sm" />

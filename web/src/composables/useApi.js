@@ -191,6 +191,31 @@ export async function getWifiClients() {
   return request('/api/wifi/clients')
 }
 
+// 仅查询 OUI 前缀。maclookup.app 支持 JSONP，避免增加后端代理和设备端依赖。
+export function lookupMacVendor(oui) {
+  return new Promise((resolve, reject) => {
+    const callback = `__macVendor_${Date.now()}_${Math.random().toString(36).slice(2)}`
+    const script = document.createElement('script')
+    const timer = setTimeout(() => finish(new Error('厂商查询超时')), 5000)
+
+    function finish(error, data) {
+      clearTimeout(timer)
+      delete window[callback]
+      script.remove()
+      if (error) reject(error)
+      else resolve(data)
+    }
+
+    window[callback] = data => {
+      if (data?.success && data.found && data.company) finish(null, data)
+      else finish(new Error('未找到厂商'))
+    }
+    script.onerror = () => finish(new Error('厂商查询失败'))
+    script.src = `https://api.maclookup.app/v2/macs/${encodeURIComponent(oui)}?format=jsonp&callback=${callback}`
+    document.head.appendChild(script)
+  })
+}
+
 export async function getWifiBlacklist() {
   return request('/api/wifi/blacklist')
 }
