@@ -62,10 +62,10 @@ async function switchCard(card) {
   try {
     const approval = await approveBuiltinCardSwitch(card.operatorId)
     const data = responseData(approval)
-    if (approval.Code !== 0 || !data.goformQuery) {
+    if (approval.Code !== 0 || data.priorityMnc === undefined) {
       throw new Error(approval.Error || '实名校验未通过')
     }
-    await switchBuiltinCardGoform(data.goformQuery)
+    await switchBuiltinCardGoform(data.priorityMnc)
     currentPriority.value = data.priorityMnc
     success(`已请求切换到${card.operatorName}`)
     setTimeout(loadCards, 1500)

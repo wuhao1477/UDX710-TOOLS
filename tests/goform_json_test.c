@@ -34,8 +34,18 @@ static void test_wifi_query_builder(void) {
                 "ap_ssidpwd=p%40ssword%21&admin=admin&pwd=admin") == 0);
 }
 
+static void test_proxy_allowlist(void) {
+  assert(goform_proxy_operation_allowed("getDevInfo") == 1);
+  assert(goform_proxy_operation_allowed("getDevicePkgInfo") == 1);
+  assert(goform_proxy_operation_allowed("setapinfo") == 1);
+  assert(goform_proxy_operation_allowed("setPriorityMnc") == 1);
+  assert(goform_proxy_operation_allowed("cmd") == 0);
+  assert(goform_proxy_operation_allowed("http://example.com") == 0);
+}
+
 int main(void) {
   test_device_info_fields();
   test_wifi_query_builder();
+  test_proxy_allowlist();
   return 0;
 }

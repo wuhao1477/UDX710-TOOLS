@@ -2,6 +2,7 @@
 
 #include "goform_client.h"
 
+#include "builtin_card_rules.h"
 #include "exec_utils.h"
 
 #include <ctype.h>
@@ -177,6 +178,32 @@ int goform_set_wifi_info(const char *ssid, const char *password, char *response,
     return -1;
   }
   return curl_get(url, response, response_size);
+}
+
+int goform_set_priority_mnc(int priority, char *response, size_t response_size) {
+  char query[192];
+  char url[512];
+
+  if (builtin_card_build_priority_query(priority, query, sizeof(query)) != 0 ||
+      !response || response_size == 0 ||
+      snprintf(url, sizeof(url), GOFORM_BASE
+               "/goform/goform_set_cmd_process?%s&admin=admin&pwd=admin",
+               query) >= (int)sizeof(url)) {
+    return -1;
+  }
+  return curl_get(url, response, response_size);
+}
+
+int goform_proxy_operation_allowed(const char *operation) {
+  static const char *const allowed[] = {
+      "getDevInfo",       "getAllDeviceInfo", "getSimInfo",
+      "getDevicePkgInfo", "setapinfo",        "setPriorityMnc",
+      NULL};
+  if (!operation) return 0;
+  for (int i = 0; allowed[i]; i++) {
+    if (strcmp(operation, allowed[i]) == 0) return 1;
+  }
+  return 0;
 }
 
 int goform_check_real_name(const char *operator_id, const char *device_id,

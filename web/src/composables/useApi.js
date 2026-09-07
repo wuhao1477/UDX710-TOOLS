@@ -141,19 +141,19 @@ export async function approveBuiltinCardSwitch(operatorId) {
   })
 }
 
-let goformOnce = 1
-
-function goformBaseUrl() {
-  const port = window.location.port === '8443' ? '' : ':8443'
-  return `${window.location.protocol}//${window.location.hostname}${port}`
+export async function goformProxy(operation, payload = {}) {
+  return request('/api/goform/proxy', {
+    method: 'POST',
+    body: JSON.stringify({ operation, ...payload })
+  })
 }
 
-export async function switchBuiltinCardGoform(goformQuery) {
-  const once = goformOnce++
-  const timestamp = Math.floor(Date.now() / 1000)
-  const url = `${goformBaseUrl()}/goform/goform_set_cmd_process?${goformQuery}&admin=admin&pwd=admin&once=${once}&timestamp=${timestamp}`
-  const response = await fetch(url, { method: 'GET', mode: 'no-cors' })
-  return { requested: true, opaque: response.type === 'opaque' }
+export async function switchBuiltinCardGoform(priorityMnc) {
+  const result = await goformProxy('setPriorityMnc', { priorityMnc })
+  if (result.result !== 0) {
+    throw new Error(result.reason || 'goform 运营商切换失败')
+  }
+  return result
 }
 
 // ==================== WiFi API ====================

@@ -16,7 +16,7 @@ device_profile_test: device_profile_test.c ../src/system/device_profile.c
 builtin_card_rules_test: builtin_card_rules_test.c ../src/system/builtin_card_rules.c
 	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ $^
 
-goform_json_test: goform_json_test.c ../src/system/goform_client.c
+goform_json_test: goform_json_test.c ../src/system/goform_client.c ../src/system/builtin_card_rules.c
 	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ $^
 
 wifi_clients_test: wifi_clients_test.c ../src/system/wifi_clients.c

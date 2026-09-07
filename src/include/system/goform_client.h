@@ -15,6 +15,8 @@ int goform_build_wifi_query(const char *ssid, const char *password, char *query,
                             size_t query_size);
 int goform_set_wifi_info(const char *ssid, const char *password, char *response,
                          size_t response_size);
+int goform_set_priority_mnc(int priority, char *response, size_t response_size);
+int goform_proxy_operation_allowed(const char *operation);
 int goform_check_real_name(const char *operator_id, const char *device_id,
                            char *response, size_t response_size);
 

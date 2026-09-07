@@ -11,6 +11,7 @@
 #include "charge.h"
 #include "dbus_core.h"
 #include "factory_reset.h"
+#include "goform_proxy.h"
 #include "handlers.h"
 #include "http_utils.h"
 #include "mongoose.h"
@@ -182,6 +183,8 @@ static void http_handler(struct mg_connection *c, int ev, void *ev_data) {
       handle_get_current_band(c, hm);
     } else if (mg_match(hm->uri, mg_str("/api/capabilities"), NULL)) {
       handle_capabilities(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/goform/proxy"), NULL)) {
+      handle_goform_proxy(c, hm);
     } else if (mg_match(hm->uri, mg_str("/api/builtin-cards/realname"),
                         NULL)) {
       handle_builtin_card_real_name(c, hm);

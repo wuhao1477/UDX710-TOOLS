@@ -17,6 +17,8 @@ for route in /api/adb/status /api/adb/wireless /api/adb/usb /api/adb/restart; do
   grep -q "\"$route\"" src/handlers/http_server.c
 done
 
+grep -q '"/api/goform/proxy"' src/handlers/http_server.c
+
 test -f tools/start.sh
 test -f tools/rj45_bridge_watch.sh
 grep -q 'tools/start.sh' .github/workflows/build.yml
