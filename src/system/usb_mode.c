@@ -10,6 +10,7 @@
  */
 
 #include <stdio.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -19,6 +20,7 @@
 #include "mongoose.h"
 #include "usb_mode.h"
 #include "device_profile.h"
+#include "exec_utils.h"
 #include "http_utils.h"
 #include "json_builder.h"
 
@@ -176,7 +178,7 @@ void handle_usb_mode_set(struct mg_connection *c, struct mg_http_message *hm) {
     
     char mode_str[32] = {0};
     int permanent = 0;
-    int bval = 0;
+    bool bval = false;
     
     /* 解析JSON参数 */
     char *mode_val = mg_json_get_str(hm->body, "$.mode");
@@ -619,6 +621,191 @@ int usb_mode_get_current_hardware(void) {
         if (strcmp(pid, "0x4038") == 0) return 3; /* RNDIS */
     }
     return -1;
+}
+
+static int adb_port_is_listening(void) {
+    const char *paths[] = {"/proc/net/tcp", "/proc/net/tcp6", NULL};
+    char line[512];
+
+    for (int i = 0; paths[i]; i++) {
+        FILE *file = fopen(paths[i], "r");
+        if (!file) {
+            continue;
+        }
+        while (fgets(line, sizeof(line), file)) {
+            if (strstr(line, ":15B3") && strstr(line, " 0A ")) {
+                fclose(file);
+                return 1;
+            }
+        }
+        fclose(file);
+    }
+    return 0;
+}
+
+static int adb_daemon_is_running(void) {
+    char output[64] = {0};
+    return run_command(output, sizeof(output), "pidof", "adbd", NULL) == 0 &&
+           output[0] != '\0';
+}
+
+static int adb_usb_linked(void) {
+    char target[256];
+    ssize_t length = readlink(USB_CONFIG_PATH "/f6", target,
+                              sizeof(target) - 1);
+    if (length <= 0) {
+        return 0;
+    }
+    target[length] = '\0';
+    return strstr(target, "ffs.adb") != NULL;
+}
+
+int usb_adb_get_status(UsbAdbStatus *status) {
+    if (!status) {
+        return -1;
+    }
+    memset(status, 0, sizeof(*status));
+    status->daemon_running = adb_daemon_is_running();
+    status->usb_enabled = adb_usb_linked();
+    status->wireless_enabled = adb_port_is_listening();
+    status->wireless_port = ADB_WIRELESS_PORT;
+    return 0;
+}
+
+int usb_adb_restart(void) {
+    stop_adbd();
+    start_adbd();
+    return wait_for_functionfs();
+}
+
+int usb_adb_set_wireless(int enabled) {
+    char output[128] = {0};
+    const char *port = enabled ? "5555" : "0";
+    if (run_command(output, sizeof(output), "setprop", "service.adb.tcp.port",
+                    port, NULL) != 0) {
+        return -1;
+    }
+    return usb_adb_restart();
+}
+
+int usb_adb_set_usb(int enabled) {
+    char udc[64] = {0};
+    const char *current_udc;
+    char f6_path[256];
+    struct stat link_stat;
+    int success = 0;
+
+    if (access(USB_CONFIG_PATH, F_OK) != 0) {
+        return -1;
+    }
+    if (adb_usb_linked() == enabled) {
+        return 0;
+    }
+    current_udc = get_udc_name();
+    snprintf(udc, sizeof(udc), "%s", current_udc);
+    stop_adbd();
+    write_sysfs(USB_UDC_PATH, "none");
+    snprintf(f6_path, sizeof(f6_path), "%s/f6", USB_CONFIG_PATH);
+    if (!enabled) {
+        success = unlink(f6_path) == 0 || errno == ENOENT;
+    } else {
+        if (create_function_dir("ffs.adb") == 0) {
+            if (lstat(f6_path, &link_stat) == 0) {
+                unlink(f6_path);
+            }
+            success = create_function_link("ffs.adb", "f6") == 0;
+        }
+    }
+    if (success && enabled) {
+        start_adbd();
+        wait_for_functionfs();
+    }
+    if (!success && enabled) {
+        start_adbd();
+    }
+    if (udc[0]) {
+        write_sysfs(USB_UDC_PATH, udc);
+    }
+    return success ? 0 : -1;
+}
+
+static void adb_reply(struct mg_connection *c, const char *message) {
+    JsonBuilder *json = json_new();
+    json_obj_open(json);
+    json_add_int(json, "Code", 0);
+    json_add_str(json, "Error", "");
+    json_add_str(json, "Data", message);
+    json_obj_close(json);
+    HTTP_OK_FREE(c, json_finish(json));
+}
+
+void handle_adb_status(struct mg_connection *c, struct mg_http_message *hm) {
+    UsbAdbStatus status;
+    JsonBuilder *json;
+
+    HTTP_CHECK_GET(c, hm);
+    if (usb_adb_get_status(&status) != 0) {
+        HTTP_ERROR(c, 503, "无法读取 ADB 状态");
+        return;
+    }
+    json = json_new();
+    json_obj_open(json);
+    json_add_int(json, "Code", 0);
+    json_add_str(json, "Error", "");
+    json_key_obj_open(json, "Data");
+    json_add_bool(json, "daemonRunning", status.daemon_running);
+    json_add_bool(json, "usbEnabled", status.usb_enabled);
+    json_add_bool(json, "wirelessEnabled", status.wireless_enabled);
+    json_add_int(json, "wirelessPort", status.wireless_port);
+    json_obj_close(json);
+    json_obj_close(json);
+    HTTP_OK_FREE(c, json_finish(json));
+}
+
+void handle_adb_wireless(struct mg_connection *c, struct mg_http_message *hm) {
+    int enabled;
+    bool value;
+
+    HTTP_CHECK_POST(c, hm);
+    if (!mg_json_get_bool(hm->body, "$.enabled", &value)) {
+        HTTP_ERROR(c, 400, "enabled 参数无效");
+        return;
+    }
+    enabled = value;
+    adb_reply(c, enabled ? "正在开启无线 ADB" : "正在关闭无线 ADB");
+    c->is_draining = 1;
+    usleep(200000);
+    if (usb_adb_set_wireless(enabled) != 0) {
+        printf("[adb] 无线 ADB 设置失败\n");
+    }
+}
+
+void handle_adb_usb(struct mg_connection *c, struct mg_http_message *hm) {
+    int enabled;
+    bool value;
+
+    HTTP_CHECK_POST(c, hm);
+    if (!mg_json_get_bool(hm->body, "$.enabled", &value)) {
+        HTTP_ERROR(c, 400, "enabled 参数无效");
+        return;
+    }
+    enabled = value;
+    adb_reply(c, enabled ? "正在启用 USB ADB" : "正在关闭 USB ADB");
+    c->is_draining = 1;
+    usleep(200000);
+    if (usb_adb_set_usb(enabled) != 0) {
+        printf("[adb] USB ADB 设置失败\n");
+    }
+}
+
+void handle_adb_restart(struct mg_connection *c, struct mg_http_message *hm) {
+    HTTP_CHECK_POST(c, hm);
+    adb_reply(c, "正在重启 ADB");
+    c->is_draining = 1;
+    usleep(200000);
+    if (usb_adb_restart() != 0) {
+        printf("[adb] ADB 重启失败\n");
+    }
 }
 
 /* POST /api/usb-advance - USB 热切换 */

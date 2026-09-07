@@ -7,6 +7,7 @@
 #include "advanced.h"
 #include "apn.h"
 #include "auth.h"
+#include "builtin_cards.h"
 #include "charge.h"
 #include "dbus_core.h"
 #include "factory_reset.h"
@@ -181,6 +182,13 @@ static void http_handler(struct mg_connection *c, int ev, void *ev_data) {
       handle_get_current_band(c, hm);
     } else if (mg_match(hm->uri, mg_str("/api/capabilities"), NULL)) {
       handle_capabilities(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/builtin-cards/realname"),
+                        NULL)) {
+      handle_builtin_card_real_name(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/builtin-cards/switch"), NULL)) {
+      handle_builtin_card_switch(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/builtin-cards"), NULL)) {
+      handle_builtin_cards(c, hm);
     }
     /* 高级网络 API */
     else if (mg_match(hm->uri, mg_str("/api/bands"), NULL)) {
@@ -315,6 +323,16 @@ static void http_handler(struct mg_connection *c, int ev, void *ev_data) {
       }
     } else if (mg_match(hm->uri, mg_str("/api/usb-advance"), NULL)) {
       handle_usb_advance(c, hm);
+    }
+    /* ADB 管理 API */
+    else if (mg_match(hm->uri, mg_str("/api/adb/status"), NULL)) {
+      handle_adb_status(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/adb/wireless"), NULL)) {
+      handle_adb_wireless(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/adb/usb"), NULL)) {
+      handle_adb_usb(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/adb/restart"), NULL)) {
+      handle_adb_restart(c, hm);
     }
     /* 数据连接和漫游 API */
     else if (mg_match(hm->uri, mg_str("/api/data"), NULL)) {

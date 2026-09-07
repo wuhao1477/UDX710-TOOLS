@@ -23,6 +23,11 @@ void handle_clear_cache(struct mg_connection *c, struct mg_http_message *hm);
 void handle_get_current_band(struct mg_connection *c,
                              struct mg_http_message *hm);
 void handle_capabilities(struct mg_connection *c, struct mg_http_message *hm);
+void handle_builtin_cards(struct mg_connection *c, struct mg_http_message *hm);
+void handle_builtin_card_real_name(struct mg_connection *c,
+                                   struct mg_http_message *hm);
+void handle_builtin_card_switch(struct mg_connection *c,
+                                struct mg_http_message *hm);
 
 /* WiFi API */
 void handle_wifi_status(struct mg_connection *c, struct mg_http_message *hm);

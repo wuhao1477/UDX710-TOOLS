@@ -18,6 +18,7 @@
 #include "mongoose.h"
 #include "charge.h"
 #include "database.h"  /* 使用数据库配置函数 */
+#include "goform_client.h"
 #include "http_utils.h"
 #include "json_builder.h"
 
@@ -42,6 +43,14 @@ typedef struct {
     int current_now;
 } BatteryInfo;
 
+typedef struct {
+    int battery;
+    int charging;
+    int voltage_mv;
+    int current_ua;
+    int temperature;
+} FirmwarePowerInfo;
+
 static ChargeConfig charge_config = {0, 20, 80};
 static pthread_mutex_t charge_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int uevent_socket_fd = -1;
@@ -53,6 +62,20 @@ static battery_change_callback_t battery_callback = NULL;
 
 static int battery_available(void) {
     return access(BATTERY_UEVENT, R_OK) == 0;
+}
+
+static int get_firmware_power_info(FirmwarePowerInfo *info) {
+    char response[16384];
+    if (!info || goform_get_device_info(response, sizeof(response)) != 0) {
+        return -1;
+    }
+    memset(info, 0xff, sizeof(*info));
+    goform_json_int(response, "battery", &info->battery);
+    goform_json_int(response, "charging", &info->charging);
+    goform_json_int(response, "voltage", &info->voltage_mv);
+    goform_json_int(response, "current", &info->current_ua);
+    goform_json_int(response, "temp", &info->temperature);
+    return 0;
 }
 
 
@@ -327,6 +350,9 @@ void handle_charge_config(struct mg_connection *c, struct mg_http_message *hm) {
     if (http_is_method(hm, "GET")) {
         /* GET - 获取配置和电池状态 */
         BatteryInfo battery;
+        FirmwarePowerInfo firmware;
+        int has_battery = battery_available();
+        int has_firmware = !has_battery && get_firmware_power_info(&firmware) == 0;
         get_battery_info(&battery);
 
         pthread_mutex_lock(&charge_mutex);
@@ -341,8 +367,10 @@ void handle_charge_config(struct mg_connection *c, struct mg_http_message *hm) {
         
         /* config对象 */
         json_key_obj_open(j, "config");
-        json_add_bool(j, "supported", battery_available());
-        json_add_str(j, "powerSource", battery_available() ? "battery" : "external");
+        json_add_bool(j, "supported", has_battery);
+        json_add_str(j, "powerSource", has_battery ? "battery" : "external");
+        json_add_str(j, "reportedBy", has_battery ? "sysfs" : (has_firmware ? "fyapp" : "unavailable"));
+        json_add_bool(j, "controlSupported", has_battery);
         json_add_bool(j, "enabled", cfg.enabled);
         json_add_int(j, "startThreshold", cfg.start_threshold);
         json_add_int(j, "stopThreshold", cfg.stop_threshold);
@@ -350,14 +378,48 @@ void handle_charge_config(struct mg_connection *c, struct mg_http_message *hm) {
         
         /* battery对象 */
         json_key_obj_open(j, "battery");
-        json_add_bool(j, "supported", battery_available());
-        json_add_int(j, "capacity", battery.capacity);
-        json_add_bool(j, "charging", strcmp(battery.status, "Charging") == 0);
-        json_add_str(j, "status", battery.status);
-        json_add_str(j, "health", battery.health);
-        json_add_double(j, "temperature", (double)battery.temperature / 10.0);
-        json_add_double(j, "voltage", (double)battery.voltage_now / 1000000.0);
-        json_add_double(j, "current", (double)battery.current_now / 1000000.0);
+        json_add_bool(j, "supported", has_battery);
+        if (has_battery) {
+            json_add_int(j, "capacity", battery.capacity);
+            json_add_bool(j, "charging", strcmp(battery.status, "Charging") == 0);
+            json_add_str(j, "status", battery.status);
+            json_add_str(j, "health", battery.health);
+            json_add_double(j, "temperature", (double)battery.temperature / 10.0);
+            json_add_double(j, "voltage", (double)battery.voltage_now / 1000000.0);
+            json_add_double(j, "current", (double)battery.current_now / 1000000.0);
+            json_add_str(j, "source", "sysfs");
+        } else {
+            json_add_null(j, "capacity");
+            if (has_firmware && firmware.charging >= 0) {
+                json_add_bool(j, "charging", firmware.charging != 0);
+                json_add_str(j, "status", firmware.charging ? "Charging" : "Not charging");
+            } else {
+                json_add_null(j, "charging");
+                json_add_str(j, "status", "Unknown");
+            }
+            json_add_str(j, "health", "Firmware reported");
+            if (has_firmware && firmware.temperature >= 0) {
+                json_add_int(j, "temperatureRaw", firmware.temperature);
+            } else {
+                json_add_null(j, "temperatureRaw");
+            }
+            if (has_firmware && firmware.voltage_mv >= 0) {
+                json_add_double(j, "voltage", (double)firmware.voltage_mv / 1000.0);
+            } else {
+                json_add_null(j, "voltage");
+            }
+            if (has_firmware && firmware.current_ua >= 0) {
+                json_add_double(j, "current", (double)firmware.current_ua / 1000000.0);
+            } else {
+                json_add_null(j, "current");
+            }
+            if (has_firmware && firmware.battery >= 0) {
+                json_add_int(j, "firmwareBattery", firmware.battery);
+            } else {
+                json_add_null(j, "firmwareBattery");
+            }
+            json_add_str(j, "source", has_firmware ? "fyapp" : "unavailable");
+        }
         json_obj_close(j);
         
         json_obj_close(j);

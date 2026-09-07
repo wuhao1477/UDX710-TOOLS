@@ -34,6 +34,7 @@ extern "C" {
 #define USB_INTERFACE_IP      "192.168.66.1"
 #define USB_INTERFACE_MAC     "CC:E8:AC:C0:00:00"
 #define DEFAULT_UDC           "29100000.dwc3"
+#define ADB_WIRELESS_PORT     5555
 
 /**
  * @brief 设置USB模式
@@ -68,6 +69,22 @@ int usb_mode_switch_advanced(int mode);
  * @return 模式值, -1表示无法读取
  */
 int usb_mode_get_current_hardware(void);
+
+typedef struct {
+    int daemon_running;
+    int usb_enabled;
+    int wireless_enabled;
+    int wireless_port;
+} UsbAdbStatus;
+
+int usb_adb_get_status(UsbAdbStatus *status);
+int usb_adb_set_wireless(int enabled);
+int usb_adb_set_usb(int enabled);
+int usb_adb_restart(void);
+void handle_adb_status(struct mg_connection *c, struct mg_http_message *hm);
+void handle_adb_wireless(struct mg_connection *c, struct mg_http_message *hm);
+void handle_adb_usb(struct mg_connection *c, struct mg_http_message *hm);
+void handle_adb_restart(struct mg_connection *c, struct mg_http_message *hm);
 
 /* HTTP API处理函数 */
 void handle_usb_mode_get(struct mg_connection *c, struct mg_http_message *hm);

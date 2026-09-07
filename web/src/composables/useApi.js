@@ -121,6 +121,41 @@ export async function getCapabilities() {
   return request('/api/capabilities')
 }
 
+// ==================== 内置卡运营商 API ====================
+
+export async function getBuiltinCards() {
+  return request('/api/builtin-cards')
+}
+
+export async function checkBuiltinCardRealName(operatorId) {
+  return request('/api/builtin-cards/realname', {
+    method: 'POST',
+    body: JSON.stringify({ operatorId })
+  })
+}
+
+export async function approveBuiltinCardSwitch(operatorId) {
+  return request('/api/builtin-cards/switch', {
+    method: 'POST',
+    body: JSON.stringify({ operatorId })
+  })
+}
+
+let goformOnce = 1
+
+function goformBaseUrl() {
+  const port = window.location.port === '8443' ? '' : ':8443'
+  return `${window.location.protocol}//${window.location.hostname}${port}`
+}
+
+export async function switchBuiltinCardGoform(goformQuery) {
+  const once = goformOnce++
+  const timestamp = Math.floor(Date.now() / 1000)
+  const url = `${goformBaseUrl()}/goform/goform_set_cmd_process?${goformQuery}&admin=admin&pwd=admin&once=${once}&timestamp=${timestamp}`
+  const response = await fetch(url, { method: 'GET', mode: 'no-cors' })
+  return { requested: true, opaque: response.type === 'opaque' }
+}
+
 // ==================== WiFi API ====================
 
 export async function getWifiStatus() {
@@ -417,6 +452,30 @@ export async function usbAdvanceSwitch(mode) {
     method: 'POST',
     body: JSON.stringify({ mode })
   })
+}
+
+// ==================== ADB管理API ====================
+
+export async function getAdbStatus() {
+  return request('/api/adb/status')
+}
+
+export async function setAdbWireless(enabled) {
+  return request('/api/adb/wireless', {
+    method: 'POST',
+    body: JSON.stringify({ enabled })
+  })
+}
+
+export async function setAdbUsb(enabled) {
+  return request('/api/adb/usb', {
+    method: 'POST',
+    body: JSON.stringify({ enabled })
+  })
+}
+
+export async function restartAdb() {
+  return request('/api/adb/restart', { method: 'POST' })
 }
 
 // ==================== APN配置API ====================
