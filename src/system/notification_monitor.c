@@ -31,8 +31,22 @@ static int g_signal_ready;
 static double g_traffic_value;
 static int g_traffic_ready;
 
+static int get_rule_for_event(NotificationEventType type,
+                              NotificationRule *rule) {
+  NotificationRule rules[NOTIFICATION_MAX_RULES];
+  int count = notification_get_rules(rules, NOTIFICATION_MAX_RULES);
+  if (count < 0) return -1;
+  for (int i = 0; i < count; i++) {
+    if (rules[i].type == type) {
+      if (rule) *rule = rules[i];
+      return 0;
+    }
+  }
+  return -1;
+}
+
 static int rule_enabled(NotificationEventType type, NotificationRule *rule) {
-  return notification_get_rule(type, rule) == 0 && rule->enabled;
+  return get_rule_for_event(type, rule) == 0 && rule->enabled;
 }
 
 static void emit_message(NotificationEventType type, const char *title,

@@ -26,25 +26,25 @@ RJ45 事件仅依据运行时发现的 `eth*`、`en*` 或 `lan*` 接口；当前
 
 事件源调用 `notification_emit()`，通知管理器先检查规则和冷却时间，再放入长度为 8 的内存队列。单个发送线程消费队列并执行现有设备 curl 的 HTTP Webhook；队列满时丢弃新事件并写入错误日志，避免事件源阻塞。发送通道只有 Webhook。
 
-已有 `webhook_config` 表继续使用，规则写入新的 `notification_rules` 表。旧 `/api/sms/webhook*` 路由保留为同一处理器的兼容入口，新前端使用 `/api/notifications*` 路由。
+已有 `webhook_config` 表继续使用，通知项写入新的 `notification_entries` 表。旧 `notification_rules` 中已启用的项目只迁移一次。旧 `/api/sms/webhook*` 路由保留为同一处理器的兼容入口，新前端使用 `/api/notifications*` 路由。
 
 Webhook 模板保留 `#{sender}`、`#{content}`、`#{time}`，并增加通用变量 `#{event}`、`#{title}`、`#{message}`。发送参数使用参数数组调用 curl，禁止把 URL、请求体或请求头拼接进 shell 命令。
 
 ## 规则
 
-每个事件一条规则，字段为 `enabled`、`threshold`、`threshold_unit` 和 `cooldown_sec`。默认只有“收到新短信”启用，以保持已有行为；其他事件默认关闭。信号规则支持 `percent` 和 `dbm`，流量规则支持 `bytes` 和 `percent`。阈值型事件在越过阈值时触发，并在冷却时间内抑制重复通知。
+通知管理维护一个最多 16 项的通知列表，同一事件最多一项。添加通知时在弹窗选择事件并填写 `threshold`、`threshold_unit` 和 `cooldown_sec`；列表为空时不触发任何事件。信号规则支持 `percent` 和 `dbm`，流量规则支持 `bytes` 和 `percent`。阈值型事件在越过阈值时触发，并在冷却时间内抑制重复通知。
 
 轮询型事件复用现有 `netif_get_list()`、`wifi_get_clients()`、系统信息、vnstat 和内置卡数据；只有对应规则启用时才读取相关数据。轮询周期为 30 秒。
 
 ## 前端
 
-新增 `NotificationManager.vue` 作为独立菜单，包含 Webhook 配置、事件规则、发送测试和日志。`SmsManager.vue` 删除“短信转发”页签，但保留收件箱、发件箱、短信存储和短信接收修复。旧 Webhook 的中文/英文模板和教程内容迁移到通知管理页面。
+新增 `NotificationManager.vue` 作为独立菜单，包含 Webhook 配置、通知列表、添加/编辑/删除通知、发送测试和日志。`SmsManager.vue` 删除“短信转发”页签，但保留收件箱、发件箱、短信存储和短信接收修复。旧 Webhook 的中文/英文模板和教程内容迁移到通知管理页面。
 
 ## 验收
 
 1. 旧 `webhook_config` 配置可直接在通知管理页面读取、修改、测试和查看日志。
 2. 收到短信仍按旧配置发送，且不阻塞 D-Bus/HTTP 主循环。
-3. 默认关闭的事件不会产生通知；开启规则后只在状态变化或阈值越过时通知。
+3. 不在通知列表中的事件不会产生通知；列表项只在状态变化或阈值越过时通知。
 4. 当前设备无 RJ45 Linux 接口时不会报告 RJ45 事件。
 5. 主机侧规则、模板、事件快照测试通过；前端构建、现有测试和交叉编译配置检查通过。
 6. 不添加 SMTP、OpenSSL、邮件库或新的常驻进程。

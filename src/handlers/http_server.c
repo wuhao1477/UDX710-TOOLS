@@ -286,6 +286,8 @@ static void http_handler(struct mg_connection *c, int ev, void *ev_data) {
       handle_sms_webhook_logs(c, hm);
     } else if (mg_match(hm->uri, mg_str("/api/notifications/rules"), NULL)) {
       handle_notification_rules(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/notifications/rules/*"), NULL)) {
+      handle_notification_rule_item(c, hm);
     }
     /* LED 控制 API */
     else if (mg_match(hm->uri, mg_str("/api/led/status"), NULL)) {

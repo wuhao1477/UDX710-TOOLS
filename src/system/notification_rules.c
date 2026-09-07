@@ -32,26 +32,34 @@ int notification_event_from_id(const char *id, NotificationEventType *type) {
   return -1;
 }
 
-int notification_rules_defaults(NotificationRule *rules, size_t count) {
-  if (!rules || count < NOTIFICATION_EVENT_COUNT) {
+static int valid_unit(NotificationEventType type, const char *unit) {
+  if (type == NOTIFICATION_EVENT_SIGNAL_LOW) {
+    return strcmp(unit, "percent") == 0 || strcmp(unit, "dbm") == 0;
+  }
+  if (type == NOTIFICATION_EVENT_TRAFFIC_THRESHOLD) {
+    return strcmp(unit, "percent") == 0 || strcmp(unit, "bytes") == 0;
+  }
+  return strcmp(unit, "state") == 0;
+}
+
+int notification_rule_validate(const NotificationRule *rule) {
+  if (!rule || rule->type < 0 || rule->type >= NOTIFICATION_EVENT_COUNT ||
+      rule->enabled < 0 || rule->enabled > 1 ||
+      !valid_unit(rule->type, rule->threshold_unit) ||
+      rule->cooldown_sec < 0 || rule->cooldown_sec > 86400) {
     return -1;
   }
-  memset(rules, 0, sizeof(*rules) * count);
-  for (int i = 0; i < NOTIFICATION_EVENT_COUNT; i++) {
-    rules[i].cooldown_sec = 300;
-    snprintf(rules[i].threshold_unit, sizeof(rules[i].threshold_unit),
-             "state");
+  if (strcmp(rule->threshold_unit, "percent") == 0 &&
+      (rule->threshold < 0 || rule->threshold > 100)) {
+    return -1;
   }
-  rules[NOTIFICATION_EVENT_SMS_RECEIVED].enabled = 1;
-  rules[NOTIFICATION_EVENT_SIGNAL_LOW].threshold = 20;
-  snprintf(rules[NOTIFICATION_EVENT_SIGNAL_LOW].threshold_unit,
-           sizeof(rules[NOTIFICATION_EVENT_SIGNAL_LOW].threshold_unit),
-           "percent");
-  rules[NOTIFICATION_EVENT_TRAFFIC_THRESHOLD].threshold = 80;
-  snprintf(rules[NOTIFICATION_EVENT_TRAFFIC_THRESHOLD].threshold_unit,
-           sizeof(rules[NOTIFICATION_EVENT_TRAFFIC_THRESHOLD].threshold_unit),
-           "percent");
-  return NOTIFICATION_EVENT_COUNT;
+  if (strcmp(rule->threshold_unit, "dbm") == 0 &&
+      (rule->threshold < -200 || rule->threshold > 0)) {
+    return -1;
+  }
+  return rule->threshold >= 0 || strcmp(rule->threshold_unit, "dbm") == 0
+             ? 0
+             : -1;
 }
 
 int notification_threshold_crossed(double previous, double current,

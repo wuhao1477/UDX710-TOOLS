@@ -735,21 +735,62 @@ void handle_sms_webhook_test(struct mg_connection *c,
   }
 }
 
-/* GET/POST /api/notifications/rules - 获取或保存通知事件规则 */
+static int parse_notification_rule(struct mg_http_message *hm,
+                                   NotificationRule *rule) {
+  char *event_id = mg_json_get_str(hm->body, "$.event_type");
+  char *unit = mg_json_get_str(hm->body, "$.threshold_unit");
+  bool enabled = true;
+  double threshold = 0;
+  long cooldown = mg_json_get_long(hm->body, "$.cooldown_sec", 300);
+  int has_threshold = mg_json_get_num(hm->body, "$.threshold", &threshold);
+  int has_enabled = mg_json_get_bool(hm->body, "$.enabled", &enabled);
+  NotificationEventType type;
+
+  memset(rule, 0, sizeof(*rule));
+  if (!event_id || notification_event_from_id(event_id, &type) != 0 ||
+      cooldown < 0 || cooldown > 86400 ||
+      (!has_threshold &&
+       (type == NOTIFICATION_EVENT_SIGNAL_LOW ||
+        type == NOTIFICATION_EVENT_TRAFFIC_THRESHOLD))) {
+    free(event_id);
+    free(unit);
+    return -1;
+  }
+  rule->type = type;
+  rule->enabled = has_enabled ? (enabled ? 1 : 0) : 1;
+  rule->threshold = has_threshold ? threshold : 0;
+  rule->cooldown_sec = (int)cooldown;
+  if (unit) {
+    snprintf(rule->threshold_unit, sizeof(rule->threshold_unit), "%s", unit);
+  } else if (type == NOTIFICATION_EVENT_SIGNAL_LOW ||
+             type == NOTIFICATION_EVENT_TRAFFIC_THRESHOLD) {
+    snprintf(rule->threshold_unit, sizeof(rule->threshold_unit), "percent");
+  } else {
+    snprintf(rule->threshold_unit, sizeof(rule->threshold_unit), "state");
+  }
+  free(event_id);
+  free(unit);
+  return notification_rule_validate(rule);
+}
+
+/* GET /api/notifications/rules - 获取通知列表；POST - 添加通知 */
 void handle_notification_rules(struct mg_connection *c,
                                struct mg_http_message *hm) {
-  NotificationRule rules[NOTIFICATION_EVENT_COUNT];
+  NotificationRule rules[NOTIFICATION_MAX_RULES];
+  int count;
   if (http_is_method(hm, "GET")) {
-    if (notification_get_rules(rules, NOTIFICATION_EVENT_COUNT) < 0) {
-      HTTP_ERROR(c, 500, "获取通知规则失败");
+    count = notification_get_rules(rules, NOTIFICATION_MAX_RULES);
+    if (count < 0) {
+      HTTP_ERROR(c, 500, "获取通知列表失败");
       return;
     }
     JsonBuilder *json = json_new();
     json_obj_open(json);
     json_arr_open(json, "rules");
-    for (int i = 0; i < NOTIFICATION_EVENT_COUNT; i++) {
+    for (int i = 0; i < count; i++) {
       json_arr_obj_open(json);
-      json_add_str(json, "id", notification_event_id((NotificationEventType)i));
+      json_add_int(json, "id", rules[i].id);
+      json_add_str(json, "event_type", notification_event_id(rules[i].type));
       json_add_bool(json, "enabled", rules[i].enabled);
       json_add_double(json, "threshold", rules[i].threshold);
       json_add_str(json, "threshold_unit", rules[i].threshold_unit);
@@ -762,58 +803,46 @@ void handle_notification_rules(struct mg_connection *c,
     return;
   }
   HTTP_CHECK_POST(c, hm);
-  if (notification_get_rules(rules, NOTIFICATION_EVENT_COUNT) < 0) {
-    HTTP_ERROR(c, 500, "读取通知规则失败");
+  NotificationRule rule;
+  if (parse_notification_rule(hm, &rule) != 0 ||
+      notification_add_rule(&rule) != 0) {
+    HTTP_ERROR(c, 400, "通知项参数无效或事件已存在");
     return;
   }
-  for (int i = 0; i < NOTIFICATION_EVENT_COUNT; i++) {
-    char path[64];
-    char *id;
-    char *unit;
-    bool enabled;
-    double threshold;
-    snprintf(path, sizeof(path), "$.rules[%d].id", i);
-    id = mg_json_get_str(hm->body, path);
-    snprintf(path, sizeof(path), "$.rules[%d].threshold_unit", i);
-    unit = mg_json_get_str(hm->body, path);
-    snprintf(path, sizeof(path), "$.rules[%d].enabled", i);
-    if (!id || !unit || !mg_json_get_bool(hm->body, path, &enabled)) {
-      free(id);
-      free(unit);
-      HTTP_ERROR(c, 400, "通知规则格式无效");
-      return;
-    }
-    snprintf(path, sizeof(path), "$.rules[%d].threshold", i);
-    if (!mg_json_get_num(hm->body, path, &threshold)) {
-      free(id);
-      free(unit);
-      HTTP_ERROR(c, 400, "通知阈值格式无效");
-      return;
-    }
-    snprintf(path, sizeof(path), "$.rules[%d].cooldown_sec", i);
-    long cooldown = mg_json_get_long(hm->body, path, -1);
-    NotificationEventType type;
-    int valid = notification_event_from_id(id, &type) == 0 &&
-                type == (NotificationEventType)i && cooldown >= 0;
-    if (valid) {
-      rules[i].enabled = enabled ? 1 : 0;
-      rules[i].threshold = threshold;
-      snprintf(rules[i].threshold_unit, sizeof(rules[i].threshold_unit), "%s",
-               unit);
-      rules[i].cooldown_sec = (int)cooldown;
-    }
-    free(id);
-    free(unit);
-    if (!valid) {
-      HTTP_ERROR(c, 400, "通知规则参数无效");
-      return;
-    }
+  HTTP_SUCCESS(c, "通知项已添加");
+}
+
+/* PUT/DELETE /api/notifications/rules/:id - 修改或删除通知项 */
+void handle_notification_rule_item(struct mg_connection *c,
+                                   struct mg_http_message *hm) {
+  char uri[128] = {0};
+  int id;
+  size_t length = hm->uri.len < sizeof(uri) - 1 ? hm->uri.len : sizeof(uri) - 1;
+  memcpy(uri, hm->uri.buf, length);
+  if (sscanf(uri, "/api/notifications/rules/%d", &id) != 1 || id <= 0) {
+    HTTP_ERROR(c, 400, "通知项 ID 无效");
+    return;
   }
-  if (notification_save_rules(rules, NOTIFICATION_EVENT_COUNT) == 0) {
-    HTTP_SUCCESS(c, "通知规则已保存");
-  } else {
-    HTTP_ERROR(c, 500, "保存通知规则失败");
+  if (http_is_method(hm, "DELETE")) {
+    if (notification_delete_rule(id) != 0) {
+      HTTP_ERROR(c, 404, "通知项不存在");
+      return;
+    }
+    HTTP_SUCCESS(c, "通知项已删除");
+    return;
   }
+  HTTP_CHECK_PUT(c, hm);
+  NotificationRule rule;
+  if (parse_notification_rule(hm, &rule) != 0) {
+    HTTP_ERROR(c, 400, "通知项参数无效");
+    return;
+  }
+  rule.id = id;
+  if (notification_update_rule(&rule) != 0) {
+    HTTP_ERROR(c, 404, "通知项不存在或事件已存在");
+    return;
+  }
+  HTTP_SUCCESS(c, "通知项已更新");
 }
 
 /* GET /api/sms/sent - 获取发送记录列表 */

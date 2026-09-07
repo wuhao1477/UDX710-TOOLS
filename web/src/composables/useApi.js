@@ -513,10 +513,23 @@ export async function getNotificationRules() {
   return request('/api/notifications/rules')
 }
 
-export async function saveNotificationRules(rules) {
+export async function addNotificationRule(rule) {
   return request('/api/notifications/rules', {
     method: 'POST',
-    body: JSON.stringify({ rules })
+    body: JSON.stringify(rule)
+  })
+}
+
+export async function updateNotificationRule(id, rule) {
+  return request(`/api/notifications/rules/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(rule)
+  })
+}
+
+export async function deleteNotificationRule(id) {
+  return request(`/api/notifications/rules/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
   })
 }
 

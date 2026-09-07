@@ -51,6 +51,8 @@ void handle_sms_webhook_test(struct mg_connection *c,
                              struct mg_http_message *hm);
 void handle_notification_rules(struct mg_connection *c,
                                struct mg_http_message *hm);
+void handle_notification_rule_item(struct mg_connection *c,
+                                   struct mg_http_message *hm);
 void handle_sms_sent_list(struct mg_connection *c, struct mg_http_message *hm);
 void handle_sms_sent_delete(struct mg_connection *c,
                             struct mg_http_message *hm);

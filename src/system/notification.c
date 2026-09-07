@@ -21,8 +21,9 @@ typedef struct {
 } NotificationJob;
 
 static NotificationWebhookConfig g_webhook;
-static NotificationRule g_rules[NOTIFICATION_EVENT_COUNT];
-static time_t g_last_sent[NOTIFICATION_EVENT_COUNT];
+static NotificationRule g_rules[NOTIFICATION_MAX_RULES];
+static time_t g_last_sent[NOTIFICATION_MAX_RULES];
+static int g_rule_count;
 static NotificationLog g_logs[NOTIFICATION_LOG_SIZE];
 static int g_log_count;
 static int g_log_id;
@@ -40,18 +41,6 @@ static int g_worker_stop;
 static void copy_string(char *dst, size_t dst_size, const char *src) {
   if (!dst || dst_size == 0) return;
   snprintf(dst, dst_size, "%s", src ? src : "");
-}
-
-static int valid_unit(const char *unit) {
-  return unit && (strcmp(unit, "state") == 0 ||
-                  strcmp(unit, "percent") == 0 || strcmp(unit, "dbm") == 0 ||
-                  strcmp(unit, "bytes") == 0);
-}
-
-static int valid_rule(const NotificationRule *rule) {
-  return rule && rule->enabled >= 0 && rule->enabled <= 1 &&
-         valid_unit(rule->threshold_unit) && rule->cooldown_sec >= 0 &&
-         rule->cooldown_sec <= 86400;
 }
 
 static void add_log(const NotificationEvent *event, const char *request,
@@ -213,35 +202,48 @@ static void load_webhook(void) {
   db_unescape_string(g_webhook.headers);
 }
 
+static void migrate_legacy_rules(void) {
+  if (config_get_int("notification_entries_migrated", 0)) return;
+  db_execute_safe(
+      "INSERT OR IGNORE INTO notification_entries "
+      "(event_type, enabled, threshold, threshold_unit, cooldown_sec) "
+      "SELECT event_type, enabled, threshold, threshold_unit, cooldown_sec "
+      "FROM notification_rules WHERE enabled = 1;");
+  config_set_int("notification_entries_migrated", 1);
+}
+
 static void load_rules(void) {
   char output[8192];
-  NotificationRule defaults[NOTIFICATION_EVENT_COUNT];
-  notification_rules_defaults(g_rules, NOTIFICATION_EVENT_COUNT);
-  notification_rules_defaults(defaults, NOTIFICATION_EVENT_COUNT);
-  if (db_query_rows("SELECT event_type, enabled, threshold, threshold_unit, cooldown_sec FROM notification_rules;",
-                    "|", output, sizeof(output)) != 0 || output[0] == '\0') {
+  g_rule_count = 0;
+  memset(g_rules, 0, sizeof(g_rules));
+  if (db_query_rows(
+          "SELECT id, event_type, enabled, threshold, threshold_unit, "
+          "cooldown_sec FROM notification_entries ORDER BY id;",
+          "|", output, sizeof(output)) != 0 || output[0] == '\0') {
     return;
   }
   char *save = NULL;
   char *row = strtok_r(output, "\n", &save);
-  while (row) {
-    char *fields[5] = {0};
+  while (row && g_rule_count < NOTIFICATION_MAX_RULES) {
+    char *fields[6] = {0};
     char *field_save = NULL;
     char *field = strtok_r(row, "|", &field_save);
     int count = 0;
-    while (field && count < 5) {
+    while (field && count < 6) {
       fields[count++] = field;
       field = strtok_r(NULL, "|", &field_save);
     }
-    NotificationEventType type;
-    if (count == 5 && notification_event_from_id(fields[0], &type) == 0) {
-      NotificationRule *rule = &g_rules[type];
-      rule->enabled = atoi(fields[1]) ? 1 : 0;
-      rule->threshold = atof(fields[2]);
-      copy_string(rule->threshold_unit, sizeof(rule->threshold_unit),
-                  fields[3]);
-      rule->cooldown_sec = atoi(fields[4]);
-      if (!valid_rule(rule)) *rule = defaults[type];
+    NotificationRule rule = {0};
+    if (count == 6 && fields[1] &&
+        notification_event_from_id(fields[1], &rule.type) == 0) {
+      rule.id = atoi(fields[0]);
+      rule.enabled = atoi(fields[2]) ? 1 : 0;
+      rule.threshold = atof(fields[3]);
+      copy_string(rule.threshold_unit, sizeof(rule.threshold_unit), fields[4]);
+      rule.cooldown_sec = atoi(fields[5]);
+      if (notification_rule_validate(&rule) == 0) {
+        g_rules[g_rule_count++] = rule;
+      }
     }
     row = strtok_r(NULL, "\n", &save);
   }
@@ -250,6 +252,7 @@ static void load_rules(void) {
 int notification_init(const char *db_path) {
   if (g_worker_running) return 0;
   if (db_init(db_path) != 0) return -1;
+  migrate_legacy_rules();
   pthread_mutex_lock(&g_state_lock);
   load_webhook();
   load_rules();
@@ -280,22 +283,28 @@ void notification_deinit(void) {
 }
 
 int notification_emit(const NotificationEvent *event) {
+  int rule_index = -1;
   time_t now;
   if (!event || event->type < 0 || event->type >= NOTIFICATION_EVENT_COUNT)
     return -1;
   now = time(NULL);
   pthread_mutex_lock(&g_state_lock);
-  if (!g_rules[event->type].enabled || g_webhook.url[0] == '\0' ||
-      !g_webhook.enabled ||
-      !notification_cooldown_elapsed(now, g_last_sent[event->type],
-                                     g_rules[event->type].cooldown_sec)) {
+  for (int i = 0; i < g_rule_count; i++) {
+    if (g_rules[i].type == event->type && g_rules[i].enabled &&
+        notification_cooldown_elapsed(now, g_last_sent[i],
+                                      g_rules[i].cooldown_sec)) {
+      rule_index = i;
+      break;
+    }
+  }
+  if (rule_index < 0 || g_webhook.url[0] == '\0' || !g_webhook.enabled) {
     pthread_mutex_unlock(&g_state_lock);
     return 0;
   }
   pthread_mutex_unlock(&g_state_lock);
   if (enqueue_job(event, 0) != 0) return -1;
   pthread_mutex_lock(&g_state_lock);
-  g_last_sent[event->type] = now;
+  g_last_sent[rule_index] = now;
   pthread_mutex_unlock(&g_state_lock);
   return 0;
 }
@@ -334,41 +343,120 @@ int notification_save_webhook_config(
   return 0;
 }
 
-int notification_get_rules(NotificationRule *rules, size_t count) {
-  if (!rules || count < NOTIFICATION_EVENT_COUNT) return -1;
-  pthread_mutex_lock(&g_state_lock);
-  memcpy(rules, g_rules, sizeof(g_rules));
-  pthread_mutex_unlock(&g_state_lock);
-  return NOTIFICATION_EVENT_COUNT;
+static int find_rule_index_locked(int id) {
+  for (int i = 0; i < g_rule_count; i++) {
+    if (g_rules[i].id == id) return i;
+  }
+  return -1;
 }
 
-int notification_get_rule(NotificationEventType type, NotificationRule *rule) {
-  if (!rule || type < 0 || type >= NOTIFICATION_EVENT_COUNT) return -1;
+static int find_event_index_locked(NotificationEventType type) {
+  for (int i = 0; i < g_rule_count; i++) {
+    if (g_rules[i].type == type) return i;
+  }
+  return -1;
+}
+
+int notification_get_rules(NotificationRule *rules, size_t capacity) {
+  if (!rules) return -1;
   pthread_mutex_lock(&g_state_lock);
-  *rule = g_rules[type];
+  if (capacity < (size_t)g_rule_count) {
+    pthread_mutex_unlock(&g_state_lock);
+    return -1;
+  }
+  memcpy(rules, g_rules, sizeof(NotificationRule) * (size_t)g_rule_count);
+  int count = g_rule_count;
+  pthread_mutex_unlock(&g_state_lock);
+  return count;
+}
+
+int notification_add_rule(NotificationRule *rule) {
+  char sql[512];
+  int id;
+  if (!rule || notification_rule_validate(rule) != 0 ||
+      rule->enabled != 1) {
+    return -1;
+  }
+  pthread_mutex_lock(&g_state_lock);
+  int duplicate = find_event_index_locked(rule->type) >= 0;
+  int full = g_rule_count >= NOTIFICATION_MAX_RULES;
+  pthread_mutex_unlock(&g_state_lock);
+  if (duplicate || full ||
+      snprintf(sql, sizeof(sql),
+               "INSERT INTO notification_entries "
+               "(event_type, enabled, threshold, threshold_unit, cooldown_sec) "
+               "VALUES ('%s', 1, %.3f, '%s', %d);",
+               notification_event_id(rule->type), rule->threshold,
+               rule->threshold_unit, rule->cooldown_sec) >= (int)sizeof(sql) ||
+      db_execute_safe(sql) != 0) {
+    return -1;
+  }
+  char id_sql[256];
+  snprintf(id_sql, sizeof(id_sql),
+           "SELECT id FROM notification_entries WHERE event_type='%s';",
+           notification_event_id(rule->type));
+  id = db_query_int(id_sql, 0);
+  if (id <= 0) return -1;
+  rule->id = id;
+  pthread_mutex_lock(&g_state_lock);
+  if (g_rule_count >= NOTIFICATION_MAX_RULES) {
+    pthread_mutex_unlock(&g_state_lock);
+    return -1;
+  }
+  g_rules[g_rule_count] = *rule;
+  g_last_sent[g_rule_count] = 0;
+  g_rule_count++;
   pthread_mutex_unlock(&g_state_lock);
   return 0;
 }
 
-int notification_save_rules(const NotificationRule *rules, size_t count) {
+int notification_update_rule(const NotificationRule *rule) {
   char sql[512];
-  if (!rules || count < NOTIFICATION_EVENT_COUNT) return -1;
-  for (int i = 0; i < NOTIFICATION_EVENT_COUNT; i++) {
-    if (!valid_rule(&rules[i]) ||
-        snprintf(sql, sizeof(sql),
-                 "INSERT OR REPLACE INTO notification_rules "
-                 "(event_type, enabled, threshold, threshold_unit, "
-                 "cooldown_sec) VALUES ('%s', %d, %.3f, '%s', %d);",
-                 notification_event_id((NotificationEventType)i),
-                 rules[i].enabled, rules[i].threshold,
-                 rules[i].threshold_unit, rules[i].cooldown_sec) >=
-            (int)sizeof(sql) ||
-        db_execute_safe(sql) != 0) {
-      return -1;
-    }
+  if (!rule || rule->id <= 0 || notification_rule_validate(rule) != 0 ||
+      rule->enabled != 1) {
+    return -1;
   }
   pthread_mutex_lock(&g_state_lock);
-  memcpy(g_rules, rules, sizeof(g_rules));
+  int index = find_rule_index_locked(rule->id);
+  int duplicate = find_event_index_locked(rule->type);
+  if (duplicate >= 0 && duplicate != index) index = -1;
+  pthread_mutex_unlock(&g_state_lock);
+  if (index < 0 ||
+      snprintf(sql, sizeof(sql),
+               "UPDATE notification_entries SET event_type='%s', enabled=1, "
+               "threshold=%.3f, threshold_unit='%s', cooldown_sec=%d "
+               "WHERE id=%d;",
+               notification_event_id(rule->type), rule->threshold,
+               rule->threshold_unit, rule->cooldown_sec, rule->id) >=
+          (int)sizeof(sql) ||
+      db_execute_safe(sql) != 0) {
+    return -1;
+  }
+  pthread_mutex_lock(&g_state_lock);
+  g_rules[index] = *rule;
+  pthread_mutex_unlock(&g_state_lock);
+  return 0;
+}
+
+int notification_delete_rule(int id) {
+  char sql[128];
+  pthread_mutex_lock(&g_state_lock);
+  int index = find_rule_index_locked(id);
+  pthread_mutex_unlock(&g_state_lock);
+  if (index < 0 || snprintf(sql, sizeof(sql),
+                             "DELETE FROM notification_entries WHERE id=%d;",
+                             id) >= (int)sizeof(sql) ||
+      db_execute_safe(sql) != 0) {
+    return -1;
+  }
+  pthread_mutex_lock(&g_state_lock);
+  for (int i = index; i + 1 < g_rule_count; i++) {
+    g_rules[i] = g_rules[i + 1];
+    g_last_sent[i] = g_last_sent[i + 1];
+  }
+  g_rule_count--;
+  memset(&g_rules[g_rule_count], 0, sizeof(g_rules[g_rule_count]));
+  g_last_sent[g_rule_count] = 0;
   pthread_mutex_unlock(&g_state_lock);
   return 0;
 }

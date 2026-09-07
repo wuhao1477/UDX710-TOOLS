@@ -15,15 +15,21 @@ static void test_event_id_mapping(void) {
   assert(notification_event_from_id("not-supported", &type) != 0);
 }
 
-static void test_default_rules(void) {
-  NotificationRule rules[NOTIFICATION_EVENT_COUNT];
+static void test_rule_validation(void) {
+  NotificationRule rule = {
+      .id = 0,
+      .type = NOTIFICATION_EVENT_SIGNAL_LOW,
+      .enabled = 1,
+      .threshold = 20,
+      .threshold_unit = "percent",
+      .cooldown_sec = 300,
+  };
 
-  assert(notification_rules_defaults(rules, NOTIFICATION_EVENT_COUNT) ==
-         NOTIFICATION_EVENT_COUNT);
-  assert(rules[NOTIFICATION_EVENT_SMS_RECEIVED].enabled == 1);
-  assert(rules[NOTIFICATION_EVENT_LOGIN].enabled == 0);
-  assert(rules[NOTIFICATION_EVENT_SIGNAL_LOW].threshold_unit[0] != '\0');
-  assert(rules[NOTIFICATION_EVENT_SMS_RECEIVED].cooldown_sec == 300);
+  assert(notification_rule_validate(&rule) == 0);
+  snprintf(rule.threshold_unit, sizeof(rule.threshold_unit), "state");
+  assert(notification_rule_validate(&rule) != 0);
+  rule.type = NOTIFICATION_EVENT_LOGIN;
+  assert(notification_rule_validate(&rule) == 0);
 }
 
 static void test_template_expansion(void) {
@@ -76,7 +82,7 @@ static void test_snapshot_comparison(void) {
 
 int main(void) {
   test_event_id_mapping();
-  test_default_rules();
+  test_rule_validation();
   test_template_expansion();
   test_threshold_and_cooldown();
   test_exec_argv_without_shell();

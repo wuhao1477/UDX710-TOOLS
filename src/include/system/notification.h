@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <time.h>
 
+#define NOTIFICATION_MAX_RULES 16
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -24,6 +26,8 @@ typedef enum {
 } NotificationEventType;
 
 typedef struct {
+  int id;
+  NotificationEventType type;
   int enabled;
   double threshold;
   char threshold_unit[16];
@@ -60,7 +64,7 @@ typedef struct {
 
 const char *notification_event_id(NotificationEventType type);
 int notification_event_from_id(const char *id, NotificationEventType *type);
-int notification_rules_defaults(NotificationRule *rules, size_t count);
+int notification_rule_validate(const NotificationRule *rule);
 int notification_threshold_crossed(double previous, double current,
                                    double threshold, int rising);
 int notification_cooldown_elapsed(time_t now, time_t last, int cooldown_sec);
@@ -79,9 +83,10 @@ int notification_save_webhook_config(
     const NotificationWebhookConfig *config);
 int notification_test_webhook(void);
 int notification_get_logs(char *json_output, size_t size, int max_count);
-int notification_get_rules(NotificationRule *rules, size_t count);
-int notification_save_rules(const NotificationRule *rules, size_t count);
-int notification_get_rule(NotificationEventType type, NotificationRule *rule);
+int notification_get_rules(NotificationRule *rules, size_t capacity);
+int notification_add_rule(NotificationRule *rule);
+int notification_update_rule(const NotificationRule *rule);
+int notification_delete_rule(int id);
 void notification_maintenance(void);
 
 #ifdef __cplusplus
