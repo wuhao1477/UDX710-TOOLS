@@ -19,7 +19,16 @@ if ! command -v start-stop-daemon >/dev/null 2>&1; then
 fi
 
 cd "$BASE_DIR"
-start-stop-daemon -S -b -m -p "$SERVER_PID" -x "$SERVER" -- 6677
+server_running=0
+if [ -r "$SERVER_PID" ]; then
+    pid=$(cat "$SERVER_PID" 2>/dev/null || true)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        server_running=1
+    fi
+fi
+if [ "$server_running" -eq 0 ]; then
+    start-stop-daemon -S -b -m -p "$SERVER_PID" -x "$SERVER" -- 6677
+fi
 
 if [ -x "$WATCHER" ]; then
     start-stop-daemon -S -b -m -p "$WATCHER_PID" -a /bin/sh -- \
