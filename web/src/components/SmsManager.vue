@@ -26,26 +26,6 @@ const smsFixEnabled = ref(false)
 const smsFixLoading = ref(false)
 const showSelectMode = ref(false)
 const showSentSelectMode = ref(false)
-const showTutorial = ref(false)
-const showWebhookLogs = ref(false)
-const webhookLogs = ref([])
-
-const webhookConfig = ref({
-  enabled: false, platform: 'pushplus', url: 'http://www.pushplus.plus/send',
-  body: '{"token":"YOUR_TOKEN","title":"新短信","content":"发件人: #{sender}\\n内容: #{content}"}',
-  headers: 'Content-Type: application/json'
-})
-
-const platformTemplates = {
-  pushplus: { url: 'http://www.pushplus.plus/send', body: '{"token":"YOUR_TOKEN","title":"新短信","content":"发件人: #{sender}\\n内容: #{content}"}', headers: 'Content-Type: application/json' },
-  serverchan: { url: 'https://sctapi.ftqq.com/YOUR_KEY.send', body: '{"title":"新短信","desp":"发件人: #{sender}\\n内容: #{content}"}', headers: 'Content-Type: application/json' },
-  bark: { url: 'https://api.day.app/YOUR_KEY/新短信/#{content}', body: '', headers: '' },
-  dingtalk: { url: 'https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN', body: '{"msgtype":"text","text":{"content":"新短信\\n发件人: #{sender}\\n内容: #{content}"}}', headers: 'Content-Type: application/json' },
-  feishu: { url: 'https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_TOKEN', body: '{"msg_type":"text","content":{"text":"新短信\\n发件人: #{sender}\\n内容: #{content}"}}', headers: 'Content-Type: application/json' },
-  discord: { url: 'https://discord.com/api/webhooks/YOUR_WEBHOOK', body: '{"content":"**新短信**\\n发件人: #{sender}\\n内容: #{content}"}', headers: 'Content-Type: application/json' },
-  custom: { url: '', body: '', headers: '' }
-}
-
 const totalPages = computed(() => Math.ceil(messages.value.length / pageSize) || 1)
 const paginatedMessages = computed(() => {
   const start = (currentPage.value - 1) * pageSize
@@ -70,20 +50,6 @@ async function fetchSentList() {
   } catch (e) { console.error('获取发送记录失败:', e) }
 }
 
-async function fetchWebhookConfig() {
-  try {
-    const res = await authFetch('/api/sms/webhook')
-    if (res.ok) {
-      const data = await res.json()
-      webhookConfig.value = data
-      // 如果URL为空，应用默认PushPlus模板
-      if (!data.url || data.url === '') {
-        applyTemplate('pushplus')
-      }
-    }
-  } catch (e) { console.error('获取Webhook配置失败:', e) }
-}
-
 async function fetchSmsConfig() {
   try {
     const res = await authFetch('/api/sms/config')
@@ -101,19 +67,6 @@ async function sendSmsApi(recipient, content) {
 
 async function deleteSmsApi(id) {
   const res = await authFetch(`/api/sms/${id}`, { method: 'DELETE' })
-  return res.json()
-}
-
-async function saveWebhookApi() {
-  const res = await authFetch('/api/sms/webhook', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(webhookConfig.value)
-  })
-  return res.json()
-}
-
-async function testWebhookApi() {
-  const res = await authFetch('/api/sms/webhook/test', { method: 'POST' })
   return res.json()
 }
 
@@ -163,7 +116,7 @@ async function toggleSmsFix() {
 
 let refreshTimer = null
 onMounted(() => {
-  fetchSmsList(); fetchSentList(); fetchWebhookConfig(); fetchSmsConfig(); fetchSmsFixStatus()
+  fetchSmsList(); fetchSentList(); fetchSmsConfig(); fetchSmsFixStatus()
   refreshTimer = setInterval(() => { fetchSmsList(); fetchSentList() }, 10000)
 })
 onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
@@ -173,8 +126,6 @@ watch(activeTab, (newTab) => {
   if (newTab === 'config') {
     fetchSmsConfig()
     fetchSmsFixStatus()
-  } else if (newTab === 'forward') {
-    fetchWebhookConfig()
   }
 })
 
@@ -245,47 +196,6 @@ async function sendNewSms() {
   } catch (e) { showStatus(false, t('sms.sendFailed')) }
 }
 
-function applyTemplate(platform) {
-  const tpl = platformTemplates[platform]
-  if (tpl) { webhookConfig.value.url = tpl.url; webhookConfig.value.body = tpl.body; webhookConfig.value.headers = tpl.headers }
-}
-
-async function saveWebhook() {
-  try {
-    const result = await saveWebhookApi()
-    showStatus(result.status === 'success', result.status === 'success' ? t('sms.webhookSaved') : t('sms.saveFailed'))
-  } catch (e) { showStatus(false, t('sms.saveFailed')) }
-}
-
-async function testWebhook() {
-  try {
-    const result = await testWebhookApi()
-    showStatus(result.status === 'success', result.status === 'success' ? t('sms.testSent') : result.error || t('sms.testFailed'))
-  } catch (e) { showStatus(false, t('sms.testFailed')) }
-}
-
-async function fetchWebhookLogs() {
-  try {
-    const res = await authFetch('/api/sms/webhook/logs?lines=20')
-    if (res.ok) {
-      const data = await res.json()
-      webhookLogs.value = data.data || []
-    }
-  } catch (e) { console.error('获取webhook日志失败:', e) }
-}
-
-function formatLogTime(ts) {
-  if (!ts) return ''
-  const d = new Date(ts * 1000)
-  const pad = n => n.toString().padStart(2, '0')
-  return `${d.getMonth()+1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
-function openWebhookLogs() {
-  fetchWebhookLogs()
-  showWebhookLogs.value = true
-}
-
 async function saveSmsConfig() {
   try {
     const result = await saveSmsConfigApi()
@@ -300,7 +210,7 @@ async function saveSmsConfig() {
 
     <!-- Tab导航 - 移动端优化：最小触控区域44px -->
     <div class="flex space-x-1 sm:space-x-2 bg-slate-100 dark:bg-white/5 backdrop-blur rounded-xl sm:rounded-2xl p-1.5 sm:p-2 border border-slate-200 dark:border-white/10 overflow-x-auto">
-      <button v-for="tab in [{id:'inbox',labelKey:'sms.inbox',icon:'fa-inbox'},{id:'outbox',labelKey:'sms.outbox',icon:'fa-paper-plane'},{id:'forward',labelKey:'sms.forward',icon:'fa-share-nodes'},{id:'config',labelKey:'sms.config',icon:'fa-gear'}]"
+      <button v-for="tab in [{id:'inbox',labelKey:'sms.inbox',icon:'fa-inbox'},{id:'outbox',labelKey:'sms.outbox',icon:'fa-paper-plane'},{id:'config',labelKey:'sms.config',icon:'fa-gear'}]"
         :key="tab.id" @click="activeTab = tab.id"
         class="flex-1 flex items-center justify-center space-x-1 sm:space-x-2 px-2 sm:px-4 py-3 min-h-[44px] rounded-lg sm:rounded-xl transition-all whitespace-nowrap"
         :class="activeTab === tab.id ? 'bg-gradient-to-r from-emerald-500/20 to-teal-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30' : 'text-slate-600 dark:text-white/60 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-white/5'">
@@ -404,55 +314,6 @@ async function saveSmsConfig() {
               </div>
             </div>
           </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 短信转发 -->
-    <div v-if="activeTab === 'forward'" class="rounded-3xl bg-white dark:bg-white/5 backdrop-blur border border-slate-200 dark:border-white/10 p-6">
-      <div class="flex items-center justify-between mb-6">
-        <div class="flex items-center space-x-3">
-          <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center"><i class="fas fa-share-nodes text-white"></i></div>
-          <h3 class="text-slate-900 dark:text-white font-bold">{{ t('sms.webhookConfig') }}</h3>
-        </div>
-        <div class="flex space-x-2">
-          <button @click="showTutorial = true" class="px-3 py-2 bg-violet-500/20 text-violet-600 dark:text-violet-400 rounded-xl hover:bg-violet-500/30 transition-all border border-violet-500/30" :title="t('sms.viewTutorial')"><i class="fas fa-book"></i></button>
-          <button @click="openWebhookLogs" class="px-3 py-2 bg-amber-500/20 text-amber-600 dark:text-amber-400 rounded-xl hover:bg-amber-500/30 transition-all border border-amber-500/30" :title="t('sms.viewSendLogs') || '发送日志'"><i class="fas fa-history"></i></button>
-          <button @click="saveWebhook" class="px-4 py-2 bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-xl hover:bg-emerald-500/30 transition-all border border-emerald-500/30">{{ t('sms.save') }}</button>
-          <button @click="testWebhook" class="px-4 py-2 bg-blue-500/20 text-blue-600 dark:text-blue-400 rounded-xl hover:bg-blue-500/30 transition-all border border-blue-500/30">{{ t('sms.test') }}</button>
-        </div>
-      </div>
-      <div class="space-y-6">
-        <div>
-          <label class="text-slate-600 dark:text-white/60 text-sm mb-2 block">{{ t('sms.selectPlatform') }}</label>
-          <select v-model="webhookConfig.platform" @change="applyTemplate(webhookConfig.platform)" class="w-full px-4 py-3 bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl text-slate-900 dark:text-white focus:border-emerald-500/50 focus:outline-none transition-all">
-            <option value="pushplus">PushPlus</option><option value="serverchan">Server酱</option><option value="bark">Bark</option>
-            <option value="dingtalk">钉钉机器人</option><option value="feishu">飞书机器人</option><option value="discord">Discord</option>
-            <option value="custom">{{ t('sms.customPlatform') || '自定义' }}</option>
-          </select>
-        </div>
-        <div class="flex items-center justify-between p-4 bg-slate-50 dark:bg-white/5 rounded-xl border border-slate-200 dark:border-white/10">
-          <div class="flex items-center space-x-3">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/20 to-teal-500/20 flex items-center justify-center"><i class="fas fa-bell text-emerald-600 dark:text-emerald-400"></i></div>
-            <div><p class="text-slate-900 dark:text-white font-medium">{{ t('sms.enableWebhook') }}</p><p class="text-slate-500 dark:text-white/40 text-xs">{{ t('sms.enableWebhookDesc') }}</p></div>
-          </div>
-          <label class="relative inline-flex items-center cursor-pointer">
-            <input type="checkbox" v-model="webhookConfig.enabled" class="sr-only peer" />
-            <div class="w-14 h-7 bg-slate-200 dark:bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-white after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-emerald-500"></div>
-          </label>
-        </div>
-        <div>
-          <label class="text-slate-600 dark:text-white/60 text-sm mb-2 block">{{ t('sms.webhookUrl') }}</label>
-          <input v-model="webhookConfig.url" type="text" placeholder="https://api.example.com/webhook" class="w-full px-4 py-3 bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-white/30 focus:border-emerald-500/50 focus:outline-none transition-all font-mono text-sm" />
-        </div>
-        <div>
-          <label class="text-slate-600 dark:text-white/60 text-sm mb-2 block">{{ t('sms.requestBody') }}</label>
-          <textarea v-model="webhookConfig.body" rows="4" class="w-full px-4 py-3 bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-white/30 focus:border-emerald-500/50 focus:outline-none transition-all resize-none font-mono text-sm"></textarea>
-          <p class="text-slate-500 dark:text-white/40 text-xs mt-1">{{ t('sms.requestBodyTip') }}</p>
-        </div>
-        <div>
-          <label class="text-slate-600 dark:text-white/60 text-sm mb-2 block">{{ t('sms.requestHeaders') }}</label>
-          <textarea v-model="webhookConfig.headers" rows="2" class="w-full px-4 py-3 bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-white/30 focus:border-emerald-500/50 focus:outline-none transition-all resize-none font-mono text-sm"></textarea>
         </div>
       </div>
     </div>
@@ -562,289 +423,6 @@ async function saveSmsConfig() {
       </Transition>
     </Teleport>
 
-    <!-- 教程弹窗 -->
-    <Teleport to="body">
-      <Transition name="fade">
-        <div v-if="showTutorial" class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="showTutorial = false"></div>
-          <div class="relative w-full max-w-3xl max-h-[85vh] bg-white dark:bg-slate-800/95 backdrop-blur-xl rounded-3xl border border-slate-200 dark:border-white/10 shadow-2xl overflow-hidden flex flex-col">
-            <div class="p-6 border-b border-slate-200 dark:border-white/10 bg-gradient-to-r from-violet-500/10 to-purple-500/10 flex-shrink-0">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center space-x-3">
-                  <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-purple-500 flex items-center justify-center"><i class="fas fa-book text-white text-lg"></i></div>
-                  <div><h3 class="text-slate-900 dark:text-white font-bold">{{ t('sms.tutorialTitle') }}</h3><p class="text-slate-500 dark:text-white/50 text-sm">{{ t('sms.tutorialSubtitle') }}</p></div>
-                </div>
-                <button @click="showTutorial = false" class="w-10 h-10 rounded-xl bg-slate-100 dark:bg-white/10 hover:bg-slate-200 dark:hover:bg-white/20 flex items-center justify-center transition-all text-slate-600 dark:text-white/60"><i class="fas fa-times"></i></button>
-              </div>
-            </div>
-            <div class="p-6 overflow-y-auto flex-1 space-y-6">
-              <!-- 功能介绍 -->
-              <div class="p-4 bg-violet-50 dark:bg-violet-500/10 rounded-xl border border-violet-200 dark:border-violet-500/20">
-                <h4 class="text-violet-700 dark:text-violet-400 font-bold mb-2"><i class="fas fa-info-circle mr-2"></i>{{ t('sms.tutorialIntro') }}</h4>
-                <p class="text-slate-600 dark:text-white/70 text-sm">{{ t('sms.tutorialIntroDesc') }}</p>
-              </div>
-              
-              <!-- 支持的平台 -->
-              <div>
-                <h4 class="text-slate-900 dark:text-white font-bold mb-3"><i class="fas fa-list-check mr-2 text-emerald-500"></i>{{ t('sms.tutorialPlatforms') }}</h4>
-                <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  <div class="p-3 bg-slate-50 dark:bg-white/5 rounded-xl border border-slate-200 dark:border-white/10 text-center">
-                    <div class="text-lg mb-1">📱</div>
-                    <p class="text-slate-700 dark:text-white/80 text-sm font-medium">PushPlus</p>
-                    <p class="text-slate-500 dark:text-white/40 text-xs">{{ t('sms.tutorialWechat') }}</p>
-                  </div>
-                  <div class="p-3 bg-slate-50 dark:bg-white/5 rounded-xl border border-slate-200 dark:border-white/10 text-center">
-                    <div class="text-lg mb-1">🔔</div>
-                    <p class="text-slate-700 dark:text-white/80 text-sm font-medium">Server酱</p>
-                    <p class="text-slate-500 dark:text-white/40 text-xs">{{ t('sms.tutorialWechat') }}</p>
-                  </div>
-                  <div class="p-3 bg-slate-50 dark:bg-white/5 rounded-xl border border-slate-200 dark:border-white/10 text-center">
-                    <div class="text-lg mb-1">🍎</div>
-                    <p class="text-slate-700 dark:text-white/80 text-sm font-medium">Bark</p>
-                    <p class="text-slate-500 dark:text-white/40 text-xs">iOS</p>
-                  </div>
-                  <div class="p-3 bg-slate-50 dark:bg-white/5 rounded-xl border border-slate-200 dark:border-white/10 text-center">
-                    <div class="text-lg mb-1">💬</div>
-                    <p class="text-slate-700 dark:text-white/80 text-sm font-medium">{{ t('sms.tutorialDingtalk') }}</p>
-                    <p class="text-slate-500 dark:text-white/40 text-xs">{{ t('sms.tutorialGroup') }}</p>
-                  </div>
-                  <div class="p-3 bg-slate-50 dark:bg-white/5 rounded-xl border border-slate-200 dark:border-white/10 text-center">
-                    <div class="text-lg mb-1">🐦</div>
-                    <p class="text-slate-700 dark:text-white/80 text-sm font-medium">{{ t('sms.tutorialFeishu') }}</p>
-                    <p class="text-slate-500 dark:text-white/40 text-xs">{{ t('sms.tutorialGroup') }}</p>
-                  </div>
-                  <div class="p-3 bg-slate-50 dark:bg-white/5 rounded-xl border border-slate-200 dark:border-white/10 text-center">
-                    <div class="text-lg mb-1">🎮</div>
-                    <p class="text-slate-700 dark:text-white/80 text-sm font-medium">Discord</p>
-                    <p class="text-slate-500 dark:text-white/40 text-xs">Webhook</p>
-                  </div>
-                </div>
-              </div>
-
-              <!-- PushPlus详细配置 -->
-              <div class="p-4 bg-orange-50 dark:bg-orange-500/10 rounded-xl border border-orange-200 dark:border-orange-500/20">
-                <h4 class="text-orange-700 dark:text-orange-400 font-bold mb-3"><i class="fas fa-rocket mr-2"></i>{{ t('sms.tutorialQuickStart') }} - PushPlus（{{ t('sms.tutorialRecommend') }}）</h4>
-                <div class="space-y-4">
-                  <div class="flex items-start space-x-3">
-                    <div class="w-7 h-7 rounded-full bg-orange-500 text-white text-sm flex items-center justify-center flex-shrink-0 font-bold">1</div>
-                    <div class="flex-1">
-                      <p class="text-slate-800 dark:text-white/90 font-medium">{{ t('sms.tutorialStep1Title') }}</p>
-                      <p class="text-slate-600 dark:text-white/60 text-sm mt-1">{{ t('sms.tutorialPushplusStep1') }}</p>
-                      <div class="mt-2 p-2 bg-white dark:bg-black/20 rounded-lg border border-orange-200 dark:border-orange-500/20">
-                        <code class="text-orange-600 dark:text-orange-400 text-xs">https://www.pushplus.plus</code>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="flex items-start space-x-3">
-                    <div class="w-7 h-7 rounded-full bg-orange-500 text-white text-sm flex items-center justify-center flex-shrink-0 font-bold">2</div>
-                    <div class="flex-1">
-                      <p class="text-slate-800 dark:text-white/90 font-medium">{{ t('sms.tutorialStep2Title') }}</p>
-                      <p class="text-slate-600 dark:text-white/60 text-sm mt-1">{{ t('sms.tutorialPushplusStep2') }}</p>
-                    </div>
-                  </div>
-                  <div class="flex items-start space-x-3">
-                    <div class="w-7 h-7 rounded-full bg-orange-500 text-white text-sm flex items-center justify-center flex-shrink-0 font-bold">3</div>
-                    <div class="flex-1">
-                      <p class="text-slate-800 dark:text-white/90 font-medium">{{ t('sms.tutorialStep3Title') }}</p>
-                      <p class="text-slate-600 dark:text-white/60 text-sm mt-1">{{ t('sms.tutorialPushplusStep3') }}</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- 其他平台配置 -->
-              <div>
-                <h4 class="text-slate-900 dark:text-white font-bold mb-3"><i class="fas fa-cog mr-2 text-blue-500"></i>{{ t('sms.tutorialOtherPlatforms') }}</h4>
-                <div class="space-y-3">
-                  <!-- Server酱 -->
-                  <div class="p-3 bg-slate-50 dark:bg-white/5 rounded-xl border border-slate-200 dark:border-white/10">
-                    <div class="flex items-center space-x-2 mb-2">
-                      <span class="text-lg">🔔</span>
-                      <span class="text-slate-800 dark:text-white/90 font-medium">Server酱</span>
-                    </div>
-                    <p class="text-slate-600 dark:text-white/60 text-sm">{{ t('sms.tutorialServerchanDesc') }}</p>
-                    <div class="mt-2 p-2 bg-white dark:bg-black/20 rounded-lg">
-                      <code class="text-blue-600 dark:text-blue-400 text-xs">https://sct.ftqq.com</code>
-                    </div>
-                  </div>
-                  <!-- Bark -->
-                  <div class="p-3 bg-slate-50 dark:bg-white/5 rounded-xl border border-slate-200 dark:border-white/10">
-                    <div class="flex items-center space-x-2 mb-2">
-                      <span class="text-lg">🍎</span>
-                      <span class="text-slate-800 dark:text-white/90 font-medium">Bark (iOS)</span>
-                    </div>
-                    <p class="text-slate-600 dark:text-white/60 text-sm">{{ t('sms.tutorialBarkDesc') }}</p>
-                  </div>
-                  <!-- 钉钉 -->
-                  <div class="p-3 bg-slate-50 dark:bg-white/5 rounded-xl border border-slate-200 dark:border-white/10">
-                    <div class="flex items-center space-x-2 mb-2">
-                      <span class="text-lg">💬</span>
-                      <span class="text-slate-800 dark:text-white/90 font-medium">{{ t('sms.tutorialDingtalk') }}</span>
-                    </div>
-                    <p class="text-slate-600 dark:text-white/60 text-sm">{{ t('sms.tutorialDingtalkDesc') }}</p>
-                  </div>
-                  <!-- 飞书 -->
-                  <div class="p-3 bg-slate-50 dark:bg-white/5 rounded-xl border border-slate-200 dark:border-white/10">
-                    <div class="flex items-center space-x-2 mb-2">
-                      <span class="text-lg">🐦</span>
-                      <span class="text-slate-800 dark:text-white/90 font-medium">{{ t('sms.tutorialFeishu') }}</span>
-                    </div>
-                    <p class="text-slate-600 dark:text-white/60 text-sm">{{ t('sms.tutorialFeishuDesc') }}</p>
-                  </div>
-                </div>
-              </div>
-
-              <!-- 变量说明 -->
-              <div>
-                <h4 class="text-slate-900 dark:text-white font-bold mb-3"><i class="fas fa-code mr-2 text-cyan-500"></i>{{ t('sms.tutorialVariables') }}</h4>
-                <p class="text-slate-600 dark:text-white/60 text-sm mb-3">{{ t('sms.tutorialVariablesDesc') }}</p>
-                <div class="p-4 bg-slate-900 dark:bg-black/30 rounded-xl font-mono text-sm overflow-x-auto">
-                  <table class="w-full">
-                    <thead>
-                      <tr class="text-slate-400 text-left">
-                        <th class="pb-2">{{ t('sms.tutorialVarName') }}</th>
-                        <th class="pb-2">{{ t('sms.tutorialVarDesc') }}</th>
-                        <th class="pb-2">{{ t('sms.tutorialVarExample') }}</th>
-                      </tr>
-                    </thead>
-                    <tbody class="text-white/80">
-                      <tr class="border-t border-slate-700">
-                        <td class="py-2 text-cyan-400">#{sender}</td>
-                        <td class="py-2 text-slate-400">{{ t('sms.tutorialVarSender') }}</td>
-                        <td class="py-2 text-green-400">10086</td>
-                      </tr>
-                      <tr class="border-t border-slate-700">
-                        <td class="py-2 text-cyan-400">#{content}</td>
-                        <td class="py-2 text-slate-400">{{ t('sms.tutorialVarContent') }}</td>
-                        <td class="py-2 text-green-400">{{ t('sms.tutorialVarContentExample') }}</td>
-                      </tr>
-                      <tr class="border-t border-slate-700">
-                        <td class="py-2 text-cyan-400">#{time}</td>
-                        <td class="py-2 text-slate-400">{{ t('sms.tutorialVarTime') }}</td>
-                        <td class="py-2 text-green-400">2025-01-01 12:00</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <!-- 自定义配置示例 -->
-              <div>
-                <h4 class="text-slate-900 dark:text-white font-bold mb-3"><i class="fas fa-edit mr-2 text-purple-500"></i>{{ t('sms.tutorialCustomExample') }}</h4>
-                <p class="text-slate-600 dark:text-white/60 text-sm mb-3">{{ t('sms.tutorialCustomExampleDesc') }}</p>
-                <div class="p-4 bg-slate-900 dark:bg-black/30 rounded-xl font-mono text-xs overflow-x-auto">
-                  <pre class="text-green-400 whitespace-pre-wrap">{
-  "title": "新短信通知",
-  "content": "发件人: #{sender}\n内容: #{content}\n时间: #{time}"
-}</pre>
-                </div>
-              </div>
-
-              <!-- 常见问题 -->
-              <div>
-                <h4 class="text-slate-900 dark:text-white font-bold mb-3"><i class="fas fa-question-circle mr-2 text-amber-500"></i>{{ t('sms.tutorialFaq') }}</h4>
-                <div class="space-y-3">
-                  <div class="p-3 bg-slate-50 dark:bg-white/5 rounded-xl border border-slate-200 dark:border-white/10">
-                    <p class="text-slate-800 dark:text-white/90 font-medium text-sm">Q: {{ t('sms.tutorialFaq1Q') }}</p>
-                    <p class="text-slate-600 dark:text-white/60 text-sm mt-1">A: {{ t('sms.tutorialFaq1A') }}</p>
-                  </div>
-                  <div class="p-3 bg-slate-50 dark:bg-white/5 rounded-xl border border-slate-200 dark:border-white/10">
-                    <p class="text-slate-800 dark:text-white/90 font-medium text-sm">Q: {{ t('sms.tutorialFaq2Q') }}</p>
-                    <p class="text-slate-600 dark:text-white/60 text-sm mt-1">A: {{ t('sms.tutorialFaq2A') }}</p>
-                  </div>
-                  <div class="p-3 bg-slate-50 dark:bg-white/5 rounded-xl border border-slate-200 dark:border-white/10">
-                    <p class="text-slate-800 dark:text-white/90 font-medium text-sm">Q: {{ t('sms.tutorialFaq3Q') }}</p>
-                    <p class="text-slate-600 dark:text-white/60 text-sm mt-1">A: {{ t('sms.tutorialFaq3A') }}</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div class="p-4 border-t border-slate-200 dark:border-white/10 flex-shrink-0">
-              <button @click="showTutorial = false" class="w-full px-6 py-3 bg-gradient-to-r from-violet-500 to-purple-500 text-white font-medium rounded-xl hover:shadow-lg hover:shadow-violet-500/30 transition-all">{{ t('sms.tutorialGotIt') }}</button>
-            </div>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
-
-    <!-- Webhook发送日志对话框 -->
-    <Teleport to="body">
-      <Transition name="fade">
-        <div v-if="showWebhookLogs" class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="showWebhookLogs = false"></div>
-          <div class="relative w-full max-w-2xl bg-white dark:bg-slate-800/95 backdrop-blur-xl rounded-3xl border border-slate-200 dark:border-white/10 shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
-            <!-- 头部 -->
-            <div class="p-4 sm:p-6 border-b border-slate-200 dark:border-white/10 bg-gradient-to-r from-amber-500/10 to-orange-500/10 flex-shrink-0">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center space-x-3">
-                  <div class="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center">
-                    <i class="fas fa-history text-white text-base sm:text-lg"></i>
-                  </div>
-                  <div>
-                    <h3 class="text-slate-900 dark:text-white font-bold text-sm sm:text-base">{{ t('sms.webhookLogs') || '转发日志' }}</h3>
-                    <p class="text-slate-500 dark:text-white/50 text-xs">{{ t('sms.webhookLogsDesc') || '最近20条转发记录 (重启后清空)' }}</p>
-                  </div>
-                </div>
-                <div class="flex items-center space-x-2">
-                  <button @click="fetchWebhookLogs" class="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-slate-100 dark:bg-white/10 hover:bg-slate-200 dark:hover:bg-white/20 flex items-center justify-center transition-all text-slate-600 dark:text-white/60">
-                    <i class="fas fa-sync-alt text-xs sm:text-sm"></i>
-                  </button>
-                  <button @click="showWebhookLogs = false" class="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-slate-100 dark:bg-white/10 hover:bg-slate-200 dark:hover:bg-white/20 flex items-center justify-center transition-all text-slate-600 dark:text-white/60">
-                    <i class="fas fa-times text-xs sm:text-sm"></i>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <!-- 内容 -->
-            <div class="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3">
-              <div v-if="webhookLogs.length === 0" class="text-center py-8">
-                <i class="fas fa-inbox text-slate-300 dark:text-white/20 text-4xl mb-4"></i>
-                <p class="text-slate-500 dark:text-white/50">{{ t('sms.noWebhookLogs') || '暂无转发记录' }}</p>
-              </div>
-              <div 
-                v-for="log in webhookLogs" 
-                :key="log.id" 
-                class="p-3 sm:p-4 rounded-xl bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10"
-              >
-                <!-- 头部: 发送者和状态 -->
-                <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
-                  <div class="flex items-center space-x-2">
-                    <span class="text-xs text-slate-500 dark:text-white/40">From:</span>
-                    <span class="font-mono text-xs sm:text-sm text-slate-900 dark:text-white">{{ log.sender }}</span>
-                  </div>
-                  <span :class="['px-2 py-0.5 rounded text-xs flex-shrink-0', log.result ? 'bg-green-100 dark:bg-green-500/20 text-green-600 dark:text-green-400' : 'bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-400']">
-                    {{ log.result ? (t('sms.webhookSendSuccess') || '发送成功') : (t('sms.webhookSendFailed') || '失败') }}
-                  </span>
-                </div>
-
-                <!-- 详情内容: 请求和返回 -->
-                <div class="space-y-2">
-                  <details class="group">
-                    <summary class="text-xs text-slate-500 dark:text-white/50 cursor-pointer hover:text-slate-700 dark:hover:text-white/70 list-none flex items-center">
-                      <i class="fas fa-chevron-right mr-1 transition-transform group-open:rotate-90"></i>
-                      <span>{{ t('sms.requestContent') || '请求内容' }}</span>
-                    </summary>
-                    <pre class="mt-2 p-2 text-xs bg-slate-100 dark:bg-black/20 rounded-lg overflow-x-auto whitespace-pre-wrap break-all text-slate-700 dark:text-white/70 font-mono">{{ log.request }}</pre>
-                  </details>
-
-                  <details class="group">
-                    <summary class="text-xs text-slate-500 dark:text-white/50 cursor-pointer hover:text-slate-700 dark:hover:text-white/70 list-none flex items-center">
-                      <i class="fas fa-chevron-right mr-1 transition-transform group-open:rotate-90"></i>
-                      <span>{{ t('sms.responseContent') || '返回结果' }}</span>
-                    </summary>
-                    <pre class="mt-2 p-2 text-xs bg-slate-100 dark:bg-black/20 rounded-lg overflow-x-auto whitespace-pre-wrap break-all text-slate-700 dark:text-white/70 font-mono">{{ log.response }}</pre>
-                  </details>
-                </div>
-
-                <!-- 时间 -->
-                <p class="text-xs text-slate-400 dark:text-white/30 mt-2 text-right">{{ formatLogTime(log.created_at) }}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
   </div>
 </template>
 

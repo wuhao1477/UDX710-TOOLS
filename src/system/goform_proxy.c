@@ -2,10 +2,12 @@
 
 #include "goform_client.h"
 #include "http_utils.h"
+#include "notification.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define GOFORM_PROXY_RESPONSE_SIZE 32768
 
@@ -65,6 +67,17 @@ void handle_goform_proxy(struct mg_connection *c, struct mg_http_message *hm) {
   if (result != 0) {
     HTTP_ERROR(c, 502, "goform 请求失败");
     return;
+  }
+  if (strcmp(operation, "setPriorityMnc") == 0) {
+    NotificationEvent event = {0};
+    const char *operator_name = priority == 7 ? "中国移动" :
+                                 priority == 9 ? "中国电信" :
+                                 priority == 11 ? "中国联通" : "未知运营商";
+    event.type = NOTIFICATION_EVENT_OPERATOR_CHANGED;
+    snprintf(event.title, sizeof(event.title), "运营商切换");
+    snprintf(event.message, sizeof(event.message), "已请求切换到%s", operator_name);
+    event.timestamp = time(NULL);
+    notification_emit(&event);
   }
   HTTP_JSON(c, 200, response);
 }

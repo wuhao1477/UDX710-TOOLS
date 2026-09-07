@@ -69,6 +69,14 @@ static void get_traffic_from_vnstat(long long *rx, long long *tx) {
     *tx = mg_json_get_long(json, "$.interfaces[0].traffic.total.tx", 0);
 }
 
+int traffic_get_total_bytes(long long *total) {
+    long long rx, tx;
+    if (!total) return -1;
+    get_traffic_from_vnstat(&rx, &tx);
+    *total = rx + tx;
+    return traffic_iface()[0] == '\0' ? -1 : 0;
+}
+
 /* 格式化字节数 */
 static void format_bytes(long long bytes, char *buf, size_t size) {
     const char *units[] = {"B", "KB", "MB", "GB", "TB"};

@@ -17,6 +17,10 @@ for route in /api/adb/status /api/adb/wireless /api/adb/usb /api/adb/restart; do
   grep -q "\"$route\"" src/handlers/http_server.c
 done
 
+for route in /api/notifications/webhook /api/notifications/webhook/test /api/notifications/logs /api/notifications/rules; do
+  grep -q "\"$route\"" src/handlers/http_server.c
+done
+
 grep -q '"/api/goform/proxy"' src/handlers/http_server.c
 
 test -f tools/start.sh

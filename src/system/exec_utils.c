@@ -12,20 +12,8 @@
 #include <signal.h>
 #include "exec_utils.h"
 
-int run_command(char *output, size_t size, const char *cmd, ...) {
-    va_list args;
-    char *argv[32];
-    int argc = 0;
-
-    /* 构建参数数组 */
-    argv[argc++] = (char *)cmd;
-    va_start(args, cmd);
-    char *arg;
-    while ((arg = va_arg(args, char *)) != NULL && argc < 31) {
-        argv[argc++] = arg;
-    }
-    va_end(args);
-    argv[argc] = NULL;
+int run_command_argv(char *output, size_t size, char *const argv[]) {
+    if (!output || size == 0 || !argv || !argv[0]) return -1;
 
     /* 创建管道 */
     int pipefd[2];
@@ -44,7 +32,7 @@ int run_command(char *output, size_t size, const char *cmd, ...) {
         dup2(pipefd[1], STDOUT_FILENO);
         dup2(pipefd[1], STDERR_FILENO);
         close(pipefd[1]);
-        execvp(cmd, argv);
+        execvp(argv[0], argv);
         _exit(127);
     }
 
@@ -70,6 +58,23 @@ int run_command(char *output, size_t size, const char *cmd, ...) {
     }
 
     return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
+}
+
+int run_command(char *output, size_t size, const char *cmd, ...) {
+    va_list args;
+    char *argv[32];
+    int argc = 0;
+
+    if (!cmd) return -1;
+    argv[argc++] = (char *)cmd;
+    va_start(args, cmd);
+    char *arg;
+    while ((arg = va_arg(args, char *)) != NULL && argc < 31) {
+        argv[argc++] = arg;
+    }
+    va_end(args);
+    argv[argc] = NULL;
+    return run_command_argv(output, size, argv);
 }
 
 int run_command_timeout(int timeout_sec, char *output, size_t size, const char *cmd, ...) {

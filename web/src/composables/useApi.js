@@ -492,6 +492,38 @@ export async function setAdbWireless(enabled) {
   })
 }
 
+// ==================== 通知管理API ====================
+
+export async function getNotificationWebhook() {
+  return request('/api/notifications/webhook')
+}
+
+export async function saveNotificationWebhook(config) {
+  return request('/api/notifications/webhook', {
+    method: 'POST',
+    body: JSON.stringify(config)
+  })
+}
+
+export async function testNotificationWebhook() {
+  return request('/api/notifications/webhook/test', { method: 'POST' })
+}
+
+export async function getNotificationRules() {
+  return request('/api/notifications/rules')
+}
+
+export async function saveNotificationRules(rules) {
+  return request('/api/notifications/rules', {
+    method: 'POST',
+    body: JSON.stringify({ rules })
+  })
+}
+
+export async function getNotificationLogs(lines = 20) {
+  return request(`/api/notifications/logs?lines=${encodeURIComponent(lines)}`)
+}
+
 export async function setAdbUsb(enabled) {
   return request('/api/adb/usb', {
     method: 'POST',

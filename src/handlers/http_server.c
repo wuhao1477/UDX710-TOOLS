@@ -15,6 +15,7 @@
 #include "handlers.h"
 #include "http_utils.h"
 #include "mongoose.h"
+#include "notification.h"
 #include "led.h"
 #include "netif.h"
 #include "reboot.h"
@@ -270,6 +271,21 @@ static void http_handler(struct mg_connection *c, int ev, void *ev_data) {
       }
     } else if (mg_match(hm->uri, mg_str("/api/sms/*"), NULL)) {
       handle_sms_delete(c, hm);
+    }
+    /* 通知管理 API；Webhook旧短信路径继续复用同一处理器 */
+    else if (mg_match(hm->uri, mg_str("/api/notifications/webhook"), NULL)) {
+      if (hm->method.len == 3 && memcmp(hm->method.buf, "GET", 3) == 0) {
+        handle_sms_webhook_get(c, hm);
+      } else {
+        handle_sms_webhook_save(c, hm);
+      }
+    } else if (mg_match(hm->uri,
+                       mg_str("/api/notifications/webhook/test"), NULL)) {
+      handle_sms_webhook_test(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/notifications/logs"), NULL)) {
+      handle_sms_webhook_logs(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/notifications/rules"), NULL)) {
+      handle_notification_rules(c, hm);
     }
     /* LED 控制 API */
     else if (mg_match(hm->uri, mg_str("/api/led/status"), NULL)) {
@@ -532,6 +548,9 @@ int http_server_start(const char *port) {
   init_charge();
 
   /* 初始化短信模块（必须在auth_init之前，因为auth依赖数据库） */
+  if (notification_init("6677.db") != 0) {
+    printf("警告: 通知管理模块初始化失败\n");
+  }
   if (sms_init("6677.db") != 0) {
     printf("警告: 短信模块初始化失败\n");
   }
@@ -591,6 +610,7 @@ void http_server_stop(void) {
   g_running = 0;
   mg_mgr_free(&g_mgr);
   sms_deinit();
+  notification_deinit();
   close_dbus();
   printf("服务器已停止\n");
 }
@@ -612,6 +632,7 @@ void http_server_run(void) {
     if (++maintenance_counter >= 3000) { /* 3000 * 10ms = 30秒 */
       maintenance_counter = 0;
       sms_maintenance();
+      notification_maintenance();
     }
   }
 }

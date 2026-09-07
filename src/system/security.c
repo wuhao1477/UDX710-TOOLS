@@ -314,6 +314,7 @@ int security_factory_reset(const SecurityVerifyRequest *req) {
                           "sms",
                           "sent_sms",
                           "webhook_config",
+                          "notification_rules",
                           "sms_config",
                           NULL};
 

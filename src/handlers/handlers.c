@@ -13,6 +13,7 @@
 #include "json_builder.h"
 #include "modem.h"
 #include "mongoose.h"
+#include "notification.h"
 #include "ofono.h"
 #include "sysinfo.h"
 #include "wifi.h"
@@ -666,8 +667,8 @@ void handle_sms_webhook_get(struct mg_connection *c,
                             struct mg_http_message *hm) {
   HTTP_CHECK_GET(c, hm);
 
-  WebhookConfig config;
-  if (sms_get_webhook_config(&config) != 0) {
+  NotificationWebhookConfig config;
+  if (notification_get_webhook_config(&config) != 0) {
     HTTP_ERROR(c, 500, "获取配置失败");
     return;
   }
@@ -700,7 +701,7 @@ void handle_sms_webhook_save(struct mg_connection *c,
                              struct mg_http_message *hm) {
   HTTP_CHECK_POST(c, hm);
 
-  WebhookConfig config = {0};
+  NotificationWebhookConfig config = {0};
 
   /* 使用mongoose JSON API解析 */
   bool enabled = false;
@@ -715,7 +716,7 @@ void handle_sms_webhook_save(struct mg_connection *c,
   mg_json_get_str_to_buf(hm->body, "$.headers", config.headers,
                          sizeof(config.headers));
 
-  if (sms_save_webhook_config(&config) == 0) {
+  if (notification_save_webhook_config(&config) == 0) {
     HTTP_SUCCESS(c, "配置已保存");
   } else {
     HTTP_ERROR(c, 500, "保存配置失败");
@@ -727,10 +728,91 @@ void handle_sms_webhook_test(struct mg_connection *c,
                              struct mg_http_message *hm) {
   HTTP_CHECK_POST(c, hm);
 
-  if (sms_test_webhook() == 0) {
+  if (notification_test_webhook() == 0) {
     HTTP_SUCCESS(c, "测试通知已发送");
   } else {
     HTTP_ERROR(c, 500, "Webhook未启用或URL为空");
+  }
+}
+
+/* GET/POST /api/notifications/rules - 获取或保存通知事件规则 */
+void handle_notification_rules(struct mg_connection *c,
+                               struct mg_http_message *hm) {
+  NotificationRule rules[NOTIFICATION_EVENT_COUNT];
+  if (http_is_method(hm, "GET")) {
+    if (notification_get_rules(rules, NOTIFICATION_EVENT_COUNT) < 0) {
+      HTTP_ERROR(c, 500, "获取通知规则失败");
+      return;
+    }
+    JsonBuilder *json = json_new();
+    json_obj_open(json);
+    json_arr_open(json, "rules");
+    for (int i = 0; i < NOTIFICATION_EVENT_COUNT; i++) {
+      json_arr_obj_open(json);
+      json_add_str(json, "id", notification_event_id((NotificationEventType)i));
+      json_add_bool(json, "enabled", rules[i].enabled);
+      json_add_double(json, "threshold", rules[i].threshold);
+      json_add_str(json, "threshold_unit", rules[i].threshold_unit);
+      json_add_int(json, "cooldown_sec", rules[i].cooldown_sec);
+      json_obj_close(json);
+    }
+    json_arr_close(json);
+    json_obj_close(json);
+    HTTP_OK_FREE(c, json_finish(json));
+    return;
+  }
+  HTTP_CHECK_POST(c, hm);
+  if (notification_get_rules(rules, NOTIFICATION_EVENT_COUNT) < 0) {
+    HTTP_ERROR(c, 500, "读取通知规则失败");
+    return;
+  }
+  for (int i = 0; i < NOTIFICATION_EVENT_COUNT; i++) {
+    char path[64];
+    char *id;
+    char *unit;
+    bool enabled;
+    double threshold;
+    snprintf(path, sizeof(path), "$.rules[%d].id", i);
+    id = mg_json_get_str(hm->body, path);
+    snprintf(path, sizeof(path), "$.rules[%d].threshold_unit", i);
+    unit = mg_json_get_str(hm->body, path);
+    snprintf(path, sizeof(path), "$.rules[%d].enabled", i);
+    if (!id || !unit || !mg_json_get_bool(hm->body, path, &enabled)) {
+      free(id);
+      free(unit);
+      HTTP_ERROR(c, 400, "通知规则格式无效");
+      return;
+    }
+    snprintf(path, sizeof(path), "$.rules[%d].threshold", i);
+    if (!mg_json_get_num(hm->body, path, &threshold)) {
+      free(id);
+      free(unit);
+      HTTP_ERROR(c, 400, "通知阈值格式无效");
+      return;
+    }
+    snprintf(path, sizeof(path), "$.rules[%d].cooldown_sec", i);
+    long cooldown = mg_json_get_long(hm->body, path, -1);
+    NotificationEventType type;
+    int valid = notification_event_from_id(id, &type) == 0 &&
+                type == (NotificationEventType)i && cooldown >= 0;
+    if (valid) {
+      rules[i].enabled = enabled ? 1 : 0;
+      rules[i].threshold = threshold;
+      snprintf(rules[i].threshold_unit, sizeof(rules[i].threshold_unit), "%s",
+               unit);
+      rules[i].cooldown_sec = (int)cooldown;
+    }
+    free(id);
+    free(unit);
+    if (!valid) {
+      HTTP_ERROR(c, 400, "通知规则参数无效");
+      return;
+    }
+  }
+  if (notification_save_rules(rules, NOTIFICATION_EVENT_COUNT) == 0) {
+    HTTP_SUCCESS(c, "通知规则已保存");
+  } else {
+    HTTP_ERROR(c, 500, "保存通知规则失败");
   }
 }
 
@@ -2277,6 +2359,12 @@ void handle_auth_login(struct mg_connection *c, struct mg_http_message *hm) {
   int ret = auth_login(password, token, sizeof(token));
 
   if (ret == 0) {
+    NotificationEvent event = {0};
+    event.type = NOTIFICATION_EVENT_LOGIN;
+    snprintf(event.title, sizeof(event.title), "登录提醒");
+    snprintf(event.message, sizeof(event.message), "管理界面登录成功");
+    event.timestamp = time(NULL);
+    notification_emit(&event);
     JsonBuilder *j = json_new();
     json_obj_open(j);
     json_add_str(j, "status", "success");
@@ -3428,7 +3516,7 @@ void handle_sms_webhook_logs(struct mg_connection *c,
     return;
   }
 
-  if (sms_get_webhook_logs(logs_json, 512 * 1024, max_lines) != 0) {
+  if (notification_get_logs(logs_json, 512 * 1024, max_lines) != 0) {
     free(logs_json);
     HTTP_ERROR(c, 500, "获取日志失败");
     return;

@@ -21,15 +21,6 @@ typedef struct {
     int is_read;
 } SmsMessage;
 
-/* Webhook配置结构 */
-typedef struct {
-    int enabled;
-    char platform[32];
-    char url[512];
-    char body[2048];
-    char headers[512];
-} WebhookConfig;
-
 /**
  * 初始化短信模块
  * @param db_path 数据库文件路径
@@ -78,26 +69,6 @@ int sms_delete(int id);
  * @return 0成功, -1失败
  */
 int sms_clear_all(void);
-
-/**
- * 获取Webhook配置
- * @param config 输出配置
- * @return 0成功, -1失败
- */
-int sms_get_webhook_config(WebhookConfig *config);
-
-/**
- * 保存Webhook配置
- * @param config 配置
- * @return 0成功, -1失败
- */
-int sms_save_webhook_config(const WebhookConfig *config);
-
-/**
- * 测试Webhook
- * @return 0成功, -1失败
- */
-int sms_test_webhook(void);
 
 /* 发送记录结构 */
 typedef struct {
@@ -173,25 +144,6 @@ int sms_get_fix_enabled(void);
  * @return 0成功, -1失败
  */
 int sms_set_fix_enabled(int enabled);
-
-/* Webhook发送日志结构（内存存储，重启后清空） */
-typedef struct {
-    int id;
-    char sender[64];       /* 短信发送者 */
-    char request[1024];    /* 发送的请求内容 */
-    char response[1024];   /* 返回的响应结果 */
-    int result;            /* 1:成功 0:失败 */
-    time_t created_at;
-} SmsWebhookLog;
-
-/**
- * 获取Webhook发送日志
- * @param json_output 输出JSON字符串
- * @param size 缓冲区大小
- * @param max_count 最大返回条数
- * @return 0成功, -1失败
- */
-int sms_get_webhook_logs(char *json_output, size_t size, int max_count);
 
 #ifdef __cplusplus
 }

@@ -10,7 +10,7 @@
 #include <gio/gio.h>
 #include "sms.h"
 #include "database.h"
-#include "exec_utils.h"
+#include "notification.h"
 #include "ofono.h"
 
 /* 短信模块专用互斥锁 */
@@ -21,24 +21,11 @@ static guint g_name_watch_id = 0;
 static int g_sms_initialized = 0;
 static int g_ofono_available = 0;
 
-/* Webhook配置 */
-static WebhookConfig g_webhook_config = {0};
-
 /* 最大短信存储数量 */
 #define DEFAULT_MAX_SMS_COUNT 50
 #define DEFAULT_MAX_SENT_COUNT 10
 static int g_max_sms_count = DEFAULT_MAX_SMS_COUNT;
 static int g_max_sent_count = DEFAULT_MAX_SENT_COUNT;
-
-/* Webhook发送日志（内存存储，重启后清空） */
-#define MAX_WEBHOOK_LOGS 30
-static SmsWebhookLog g_webhook_logs[MAX_WEBHOOK_LOGS];
-static int g_webhook_log_count = 0;
-static int g_webhook_log_id = 0;
-static pthread_mutex_t g_webhook_log_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-/* 添加Webhook日志 */
-static void add_webhook_log(const char *sender, const char *request, const char *response, int result);
 
 /* 前向声明 */
 static void on_incoming_message(GDBusConnection *conn, const gchar *sender_name,
@@ -46,7 +33,6 @@ static void on_incoming_message(GDBusConnection *conn, const gchar *sender_name,
     GVariant *parameters, gpointer user_data);
 static int save_sms_to_db(const char *sender, const char *content, time_t timestamp);
 static int save_sent_sms_to_db(const char *recipient, const char *content, time_t timestamp, const char *status);
-static void send_webhook_notification(const SmsMessage *msg);
 static void load_sms_config(void);
 static void subscribe_sms_signal(void);
 static void unsubscribe_sms_signal(void);
@@ -247,146 +233,16 @@ static void on_incoming_message(GDBusConnection *conn, const gchar *sender_name,
     if (save_sms_to_db(sender, content, now) == 0) {
         printf("[SMS] 短信已保存到数据库\n");
 
-        /* 发送Webhook通知 */
-        if (g_webhook_config.enabled && strlen(g_webhook_config.url) > 0) {
-            SmsMessage msg = {0};
-            strncpy(msg.sender, sender, sizeof(msg.sender) - 1);
-            strncpy(msg.content, content, sizeof(msg.content) - 1);
-            msg.timestamp = now;
-            send_webhook_notification(&msg);
-        }
+        NotificationEvent event = {0};
+        event.type = NOTIFICATION_EVENT_SMS_RECEIVED;
+        snprintf(event.title, sizeof(event.title), "新短信");
+        snprintf(event.message, sizeof(event.message), "设备收到新短信");
+        snprintf(event.sender, sizeof(event.sender), "%s", sender);
+        snprintf(event.content, sizeof(event.content), "%s", content);
+        event.timestamp = now;
+        notification_emit(&event);
     }
     g_variant_unref(props);
-}
-
-/* 发送Webhook通知 */
-static void send_webhook_notification_ext(const SmsMessage *msg, int force) {
-    if (!force && (!g_webhook_config.enabled || strlen(g_webhook_config.url) == 0)) {
-        return;
-    }
-
-    if (strlen(g_webhook_config.url) == 0) {
-        printf("[SMS] Webhook URL未配置\n");
-        return;
-    }
-
-    printf("[SMS] 发送Webhook通知到: %s (force=%d)\n", g_webhook_config.url, force);
-
-    /* 替换变量 */
-    char body[4096];
-    strncpy(body, g_webhook_config.body, sizeof(body) - 1);
-    body[sizeof(body) - 1] = '\0';
-
-    /* 简单的变量替换 */
-    char *p;
-    char temp[4096];
-
-    /* 替换 #{sender} */
-    while ((p = strstr(body, "#{sender}")) != NULL) {
-        *p = '\0';
-        snprintf(temp, sizeof(temp), "%s%s%s", body, msg->sender, p + 9);
-        strncpy(body, temp, sizeof(body) - 1);
-    }
-
-    /* 替换 #{content} */
-    while ((p = strstr(body, "#{content}")) != NULL) {
-        *p = '\0';
-        snprintf(temp, sizeof(temp), "%s%s%s", body, msg->content, p + 10);
-        strncpy(body, temp, sizeof(body) - 1);
-    }
-
-    /* 替换 #{time} */
-    char time_str[32];
-    struct tm *tm_info = localtime(&msg->timestamp);
-    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm_info);
-    while ((p = strstr(body, "#{time}")) != NULL) {
-        *p = '\0';
-        snprintf(temp, sizeof(temp), "%s%s%s", body, time_str, p + 7);
-        strncpy(body, temp, sizeof(body) - 1);
-    }
-
-    /* 将body写入临时文件，避免shell转义问题 */
-    const char *tmp_file = "/tmp/webhook_body.json";
-    FILE *fp = fopen(tmp_file, "w");
-    if (fp) {
-        fputs(body, fp);
-        fclose(fp);
-    } else {
-        printf("[SMS] 无法创建临时文件\n");
-        add_webhook_log(msg->sender, body, "创建临时文件失败", 0);
-        return;
-    }
-
-    /* 构建curl命令 */
-    char cmd[8192];
-    char headers_part[1024] = "";
-
-    /* 解析自定义headers */
-    if (strlen(g_webhook_config.headers) > 0) {
-        char headers_copy[512];
-        strncpy(headers_copy, g_webhook_config.headers, sizeof(headers_copy) - 1);
-        headers_copy[sizeof(headers_copy) - 1] = '\0';
-
-        char *line = strtok(headers_copy, "\n");
-        while (line) {
-            while (*line == ' ' || *line == '\r') line++;
-            if (strlen(line) > 0 && strchr(line, ':')) {
-                char header_arg[256];
-                char *cr = strchr(line, '\r');
-                if (cr) *cr = '\0';
-                snprintf(header_arg, sizeof(header_arg), " -H '%s'", line);
-                strncat(headers_part, header_arg, sizeof(headers_part) - strlen(headers_part) - 1);
-            }
-            line = strtok(NULL, "\n");
-        }
-    }
-
-    /* 同步执行curl获取响应 */
-    if (strstr(headers_part, "Content-Type") == NULL) {
-        snprintf(cmd, sizeof(cmd),
-            "curl -s --max-time 10 -X POST '%s' -H 'Content-Type: application/json'%s -d @%s 2>&1",
-            g_webhook_config.url, headers_part, tmp_file);
-    } else {
-        snprintf(cmd, sizeof(cmd),
-            "curl -s --max-time 10 -X POST '%s'%s -d @%s 2>&1",
-            g_webhook_config.url, headers_part, tmp_file);
-    }
-
-    printf("[SMS] 执行: %s\n", cmd);
-
-    /* 使用popen捕获响应 */
-    char response[1024] = "";
-    FILE *pipe = popen(cmd, "r");
-    if (pipe) {
-        size_t total = 0;
-        char buf[256];
-        while (fgets(buf, sizeof(buf), pipe) && total < sizeof(response) - 1) {
-            size_t len = strlen(buf);
-            if (total + len < sizeof(response)) {
-                strcat(response, buf);
-                total += len;
-            }
-        }
-        pclose(pipe);
-    } else {
-        strncpy(response, "执行curl失败", sizeof(response) - 1);
-    }
-
-    /* 删除临时文件 */
-    unlink(tmp_file);
-
-    /* 判断是否成功 */
-    int result = (strlen(response) > 0 && strstr(response, "curl:") == NULL) ? 1 : 0;
-
-    printf("[SMS] Webhook响应: %s\n", response);
-
-    /* 记录日志 */
-    add_webhook_log(msg->sender, body, response, result);
-}
-
-/* 发送Webhook通知 */
-static void send_webhook_notification(const SmsMessage *msg) {
-    send_webhook_notification_ext(msg, 0);
 }
 
 /* 初始化短信模块 */
@@ -409,7 +265,6 @@ int sms_init(const char *db_path) {
 
     /* 加载配置 */
     load_sms_config();
-    sms_get_webhook_config(&g_webhook_config);
 
     /* 连接D-Bus */
     g_sms_dbus_conn = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, &error);
@@ -636,119 +491,6 @@ int sms_clear_all(void) {
     int ret = db_execute("DELETE FROM sms;");
     pthread_mutex_unlock(&g_sms_mutex);
     return ret;
-}
-
-/* 获取Webhook配置 */
-int sms_get_webhook_config(WebhookConfig *config) {
-    char output[4096];
-
-    if (!config) return -1;
-
-    memset(config, 0, sizeof(WebhookConfig));
-
-    const char *sql = "SELECT enabled, platform, url, body, headers FROM webhook_config WHERE id = 1;";
-
-    pthread_mutex_lock(&g_sms_mutex);
-    int ret = db_query_rows(sql, "|", output, sizeof(output));
-    pthread_mutex_unlock(&g_sms_mutex);
-
-    if (ret != 0 || strlen(output) == 0) {
-        /* 使用默认配置 */
-        config->enabled = 0;
-        strcpy(config->platform, "pushplus");
-        return 0;
-    }
-
-    /* 解析输出 */
-    char *fields[5] = {NULL};
-    int field_count = 0;
-    char *p = output;
-    char *start = p;
-
-    while (*p && field_count < 5) {
-        if (*p == '|') {
-            *p = '\0';
-            fields[field_count++] = start;
-            start = p + 1;
-        }
-        p++;
-    }
-    if (field_count < 5 && start) {
-        fields[field_count++] = start;
-    }
-
-    if (field_count >= 5) {
-        config->enabled = atoi(fields[0]);
-        strncpy(config->platform, fields[1], sizeof(config->platform) - 1);
-        strncpy(config->url, fields[2], sizeof(config->url) - 1);
-        strncpy(config->body, fields[3], sizeof(config->body) - 1);
-        strncpy(config->headers, fields[4], sizeof(config->headers) - 1);
-
-        /* 去除末尾换行符 */
-        char *nl = strchr(config->headers, '\n');
-        if (nl) *nl = '\0';
-
-        /* 反转义特殊字符 */
-        db_unescape_string(config->url);
-        db_unescape_string(config->body);
-        db_unescape_string(config->headers);
-    }
-
-    return 0;
-}
-
-/* 保存Webhook配置 */
-int sms_save_webhook_config(const WebhookConfig *config) {
-    char sql[8192];
-    char escaped_body[4096];
-    char escaped_headers[1024];
-    char escaped_url[1024];
-
-    if (!config) return -1;
-
-    /* 转义特殊字符 */
-    db_escape_string(config->body, escaped_body, sizeof(escaped_body));
-    db_escape_string(config->headers, escaped_headers, sizeof(escaped_headers));
-    db_escape_string(config->url, escaped_url, sizeof(escaped_url));
-
-    snprintf(sql, sizeof(sql),
-        "INSERT OR REPLACE INTO webhook_config (id, enabled, platform, url, body, headers) "
-        "VALUES (1, %d, '%s', '%s', '%s', '%s');",
-        config->enabled, config->platform, escaped_url, escaped_body, escaped_headers);
-
-    pthread_mutex_lock(&g_sms_mutex);
-    int ret = db_execute(sql);
-    pthread_mutex_unlock(&g_sms_mutex);
-
-    if (ret == 0) {
-        /* 更新内存中的配置 */
-        memcpy(&g_webhook_config, config, sizeof(WebhookConfig));
-        printf("[SMS] Webhook配置保存成功\n");
-    } else {
-        printf("[SMS] Webhook配置保存失败\n");
-    }
-
-    return ret;
-}
-
-/* 测试Webhook */
-int sms_test_webhook(void) {
-    SmsMessage test_msg = {
-        .id = 0,
-        .sender = "+8613800138000",
-        .content = "这是一条测试短信",
-        .timestamp = time(NULL),
-        .is_read = 0
-    };
-
-    if (strlen(g_webhook_config.url) == 0) {
-        printf("[SMS] Webhook URL为空\n");
-        return -1;
-    }
-
-    /* 测试时强制发送，无需检查enabled状态 */
-    send_webhook_notification_ext(&test_msg, 1);
-    return 0;
 }
 
 /* 检查短信模块状态 */
@@ -1066,117 +808,4 @@ int sms_set_max_sent_count(int count) {
     }
 
     return ret;
-}
-
-/* 添加Webhook发送日志（内存存储） */
-static void add_webhook_log(const char *sender, const char *request, const char *response, int result) {
-    pthread_mutex_lock(&g_webhook_log_mutex);
-
-    /* 循环缓冲区 */
-    int idx = g_webhook_log_count % MAX_WEBHOOK_LOGS;
-
-    g_webhook_logs[idx].id = ++g_webhook_log_id;
-    strncpy(g_webhook_logs[idx].sender, sender ? sender : "", sizeof(g_webhook_logs[idx].sender) - 1);
-    strncpy(g_webhook_logs[idx].request, request ? request : "", sizeof(g_webhook_logs[idx].request) - 1);
-    strncpy(g_webhook_logs[idx].response, response ? response : "", sizeof(g_webhook_logs[idx].response) - 1);
-    g_webhook_logs[idx].result = result;
-    g_webhook_logs[idx].created_at = time(NULL);
-
-    if (g_webhook_log_count < MAX_WEBHOOK_LOGS) {
-        g_webhook_log_count++;
-    }
-
-    pthread_mutex_unlock(&g_webhook_log_mutex);
-
-    printf("[SMS] Webhook日志已添加, ID=%d, 结果=%d\n", g_webhook_log_id, result);
-}
-
-/* JSON字符串转义工具 */
-static void json_escape(char *dest, const char *src, size_t dest_size) {
-    if (!dest || !src || dest_size == 0) return;
-
-    size_t i = 0, j = 0;
-    while (src[i] && j < dest_size - 1) {
-        unsigned char c = (unsigned char)src[i];
-        if (c == '"') {
-            if (j + 2 < dest_size) { dest[j++] = '\\'; dest[j++] = '"'; } else break;
-        } else if (c == '\\') {
-            if (j + 2 < dest_size) { dest[j++] = '\\'; dest[j++] = '\\'; } else break;
-        } else if (c == '\b') {
-            if (j + 2 < dest_size) { dest[j++] = '\\'; dest[j++] = 'b'; } else break;
-        } else if (c == '\f') {
-            if (j + 2 < dest_size) { dest[j++] = '\\'; dest[j++] = 'f'; } else break;
-        } else if (c == '\n') {
-            if (j + 2 < dest_size) { dest[j++] = '\\'; dest[j++] = 'n'; } else break;
-        } else if (c == '\r') {
-            if (j + 2 < dest_size) { dest[j++] = '\\'; dest[j++] = 'r'; } else break;
-        } else if (c == '\t') {
-            if (j + 2 < dest_size) { dest[j++] = '\\'; dest[j++] = 't'; } else break;
-        } else if (c < 32) {
-            if (j + 6 < dest_size) {
-                j += snprintf(dest + j, 7, "\\u%04x", c);
-            } else break;
-        } else {
-            dest[j++] = c;
-        }
-        i++;
-    }
-    dest[j] = '\0';
-}
-
-/* 获取Webhook发送日志 */
-int sms_get_webhook_logs(char *json_output, size_t size, int max_count) {
-    if (!json_output || size == 0) {
-        return -1;
-    }
-
-    if (max_count <= 0 || max_count > MAX_WEBHOOK_LOGS) {
-        max_count = 20;
-    }
-
-    pthread_mutex_lock(&g_webhook_log_mutex);
-
-    int offset = 0;
-    offset += snprintf(json_output + offset, size - offset, "[");
-
-    int count = (g_webhook_log_count < max_count) ? g_webhook_log_count : max_count;
-    int first = 1;
-
-    /* 从最新的日志开始输出 */
-    for (int i = 0; i < count && offset < (int)size - 10; i++) {
-        int idx;
-        if (g_webhook_log_count <= MAX_WEBHOOK_LOGS) {
-            idx = g_webhook_log_count - 1 - i;
-        } else {
-            idx = (g_webhook_log_count - 1 - i) % MAX_WEBHOOK_LOGS;
-        }
-
-        if (idx < 0) break;
-
-        if (!first) offset += snprintf(json_output + offset, size - offset, ",");
-        first = 0;
-
-        char escaped_req[3072] = "";
-        char escaped_resp[3072] = "";
-
-        json_escape(escaped_req, g_webhook_logs[idx].request, sizeof(escaped_req));
-        json_escape(escaped_resp, g_webhook_logs[idx].response, sizeof(escaped_resp));
-
-        offset += snprintf(json_output + offset, size - offset,
-            "{\"id\":%d,\"sender\":\"%s\",\"request\":\"%s\",\"response\":\"%s\",\"result\":%d,\"created_at\":%ld}",
-            g_webhook_logs[idx].id,
-            g_webhook_logs[idx].sender,
-            escaped_req,
-            escaped_resp,
-            g_webhook_logs[idx].result,
-            (long)g_webhook_logs[idx].created_at);
-
-        if (offset >= (int)size - 10) break;
-    }
-
-    offset += snprintf(json_output + offset, size - offset, "]");
-
-    pthread_mutex_unlock(&g_webhook_log_mutex);
-
-    return 0;
 }

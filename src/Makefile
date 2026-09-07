@@ -31,6 +31,7 @@ SYSTEM_SRCS = system/sysinfo.c system/modem.c system/airplane.c system/ofono.c \
               system/device_profile.c system/led.c system/power_key.c system/wifi.c \
               system/factory_reset.c system/builtin_card_rules.c \
               system/goform_client.c system/builtin_cards.c system/wifi_clients.c \
+              system/notification_rules.c system/notification.c system/notification_monitor.c \
               system/goform_proxy.c
 SRCS = $(MAIN_SRCS) $(HANDLER_SRCS) $(SYSTEM_SRCS)
 OBJS = $(BUILD_DIR)/main.o $(BUILD_DIR)/mongoose.o $(BUILD_DIR)/packed_fs.o \
@@ -45,7 +46,9 @@ OBJS = $(BUILD_DIR)/main.o $(BUILD_DIR)/mongoose.o $(BUILD_DIR)/packed_fs.o \
        $(BUILD_DIR)/ipv6_proxy.o $(BUILD_DIR)/security.o $(BUILD_DIR)/device_profile.o \
        $(BUILD_DIR)/led.o $(BUILD_DIR)/power_key.o $(BUILD_DIR)/wifi.o $(BUILD_DIR)/factory_reset.o \
        $(BUILD_DIR)/builtin_card_rules.o $(BUILD_DIR)/goform_client.o $(BUILD_DIR)/builtin_cards.o \
-       $(BUILD_DIR)/wifi_clients.o $(BUILD_DIR)/goform_proxy.o
+       $(BUILD_DIR)/wifi_clients.o $(BUILD_DIR)/notification_rules.o \
+       $(BUILD_DIR)/notification.o $(BUILD_DIR)/notification_monitor.o \
+       $(BUILD_DIR)/goform_proxy.o
 
 .PHONY: all clean
 
@@ -171,6 +174,15 @@ $(BUILD_DIR)/builtin_cards.o: system/builtin_cards.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
 
 $(BUILD_DIR)/wifi_clients.o: system/wifi_clients.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
+
+$(BUILD_DIR)/notification_rules.o: system/notification_rules.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
+
+$(BUILD_DIR)/notification.o: system/notification.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
+
+$(BUILD_DIR)/notification_monitor.o: system/notification_monitor.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
 
 $(BUILD_DIR)/goform_proxy.o: system/goform_proxy.c | $(BUILD_DIR)

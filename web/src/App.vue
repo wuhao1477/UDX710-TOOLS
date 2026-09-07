@@ -7,6 +7,7 @@ import WifiManager from './components/WifiManager.vue'
 import DeviceManager from './components/DeviceManager.vue'
 import AdvancedNetwork from './components/AdvancedNetwork.vue'
 import SmsManager from './components/SmsManager.vue'
+import NotificationManager from './components/NotificationManager.vue'
 import TrafficStats from './components/TrafficStats.vue'
 import BatteryManager from './components/BatteryManager.vue'
 import SystemSettings from './components/SystemSettings.vue'
@@ -303,6 +304,7 @@ const menuItems = [
   { id: 'apn', labelKey: 'menu.apn', icon: 'fa-globe', color: 'from-teal-500 to-cyan-400' },
   { id: 'advanced', labelKey: 'menu.advanced', icon: 'fa-tower-cell', color: 'from-cyan-500 to-blue-500' },
   { id: 'sms', labelKey: 'menu.sms', icon: 'fa-envelope', color: 'from-emerald-500 to-teal-400' },
+  { id: 'notifications', labelKey: 'menu.notifications', icon: 'fa-bell', color: 'from-orange-500 to-amber-400' },
   { id: 'traffic', labelKey: 'menu.traffic', icon: 'fa-chart-area', color: 'from-green-500 to-emerald-400' },
   { id: 'battery', labelKey: 'menu.battery', icon: 'fa-battery-half', color: 'from-yellow-500 to-amber-400' },
   { id: 'rathole', labelKey: 'menu.rathole', icon: 'fa-shield-alt', color: 'from-indigo-500 to-violet-400' },
@@ -702,6 +704,7 @@ onUnmounted(() => {
           <DeviceManager v-else-if="activeMenu === 'devices'" key="devices" />
           <AdvancedNetwork v-else-if="activeMenu === 'advanced'" key="advanced" />
           <SmsManager v-else-if="activeMenu === 'sms'" key="sms" />
+          <NotificationManager v-else-if="activeMenu === 'notifications'" key="notifications" />
           <TrafficStats v-else-if="activeMenu === 'traffic'" key="traffic" />
           <BatteryManager v-else-if="activeMenu === 'battery'" key="battery" />
           <RatholeManager v-else-if="activeMenu === 'rathole'" key="rathole" />

@@ -13,6 +13,7 @@ extern "C" {
 #endif
 
 void init_traffic(void);
+int traffic_get_total_bytes(long long *total);
 void handle_get_traffic_total(struct mg_connection *c, struct mg_http_message *hm);
 void handle_get_traffic_config(struct mg_connection *c, struct mg_http_message *hm);
 void handle_set_traffic_limit(struct mg_connection *c, struct mg_http_message *hm);

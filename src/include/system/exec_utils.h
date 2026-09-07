@@ -25,6 +25,11 @@ extern "C" {
 int run_command(char *output, size_t size, const char *cmd, ...);
 
 /**
+ * @brief 使用参数数组执行命令，不经过shell
+ */
+int run_command_argv(char *output, size_t size, char *const argv[]);
+
+/**
  * @brief 带超时执行命令
  * @param timeout_sec 超时秒数
  * @param output 输出缓冲区
