@@ -22,7 +22,8 @@ cd "$BASE_DIR"
 start-stop-daemon -S -b -m -p "$SERVER_PID" -x "$SERVER" -- 6677
 
 if [ -x "$WATCHER" ]; then
-    start-stop-daemon -S -b -m -p "$WATCHER_PID" -x "$WATCHER"
+    start-stop-daemon -S -b -m -p "$WATCHER_PID" -a /bin/sh -- \
+        -c "exec '$WATCHER'"
 fi
 
 echo "UDX710 tools started on port 6677"
