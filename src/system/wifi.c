@@ -12,6 +12,7 @@
 #include "wifi_clients.h"
 #include "exec_utils.h"
 #include "device_profile.h"
+#include "goform_client.h"
 
 /* 配置文件路径 */
 #define HOSTAPD_2G_CONF "/mnt/data/hostapd_2g.conf"
@@ -557,10 +558,24 @@ int wifi_get_status(WifiConfig *config) {
     char value[128];
     const char *band;
     const char *conf_file;
+    char goform_response[16384];
+    char goform_ssid[64] = {0};
+    char goform_password[64] = {0};
+    int goform_enabled = -1;
+    int goform_hidden = -1;
     
     if (!config) return -1;
     
     memset(config, 0, sizeof(WifiConfig));
+
+    if (goform_get_device_info(goform_response, sizeof(goform_response)) == 0) {
+        goform_json_string(goform_response, "wifissid", goform_ssid,
+                           sizeof(goform_ssid));
+        goform_json_string(goform_response, "wifipwd", goform_password,
+                           sizeof(goform_password));
+        goform_json_int(goform_response, "wifistate", &goform_enabled);
+        goform_json_int(goform_response, "ssidhide", &goform_hidden);
+    }
     
     /* 检查是否运行 */
     config->enabled = wifi_is_running();
@@ -600,6 +615,19 @@ int wifi_get_status(WifiConfig *config) {
     
     /* 加密方式固定WPA2 */
     strncpy(config->encryption, "WPA2", sizeof(config->encryption) - 1);
+
+    if (goform_ssid[0]) {
+        strncpy(config->ssid, goform_ssid, sizeof(config->ssid) - 1);
+    }
+    if (goform_password[0]) {
+        strncpy(config->password, goform_password, sizeof(config->password) - 1);
+    }
+    if (goform_enabled >= 0) {
+        config->enabled = goform_enabled != 0;
+    }
+    if (goform_hidden >= 0) {
+        config->hidden = goform_hidden != 0;
+    }
     
     return 0;
 }
@@ -651,52 +679,36 @@ int wifi_disable(void) {
     return ret;
 }
 
-int wifi_set_ssid(const char *ssid) {
-    const char *band;
-    const char *conf_file;
-    
-    if (!ssid || strlen(ssid) == 0) return -1;
-    
-    printf("[WiFi] 设置SSID: %s\n", ssid);
-    
-    /* 获取当前频段，未运行时默认5G */
-    band = wifi_get_active_band();
-    if (!band) band = "5G";
-    conf_file = wifi_get_conf_file(band);
-    
-    /* 修改配置文件 */
-    wifi_write_config_param(conf_file, "ssid", ssid);
-    
-    /* 如果正在运行，重启生效 */
-    if (wifi_is_running()) {
-        return wifi_restart();
+int wifi_set_ap_info(const char *ssid, const char *password) {
+    WifiConfig current;
+    char response[8192];
+    const char *target_ssid = ssid && *ssid ? ssid : NULL;
+    const char *target_password = password && *password ? password : NULL;
+    int result;
+
+    if ((target_password && strlen(target_password) < 8) ||
+        wifi_get_status(&current) != 0) {
+        return -1;
     }
-    
+    if (!target_ssid) target_ssid = current.ssid;
+    if (!target_password) target_password = current.password;
+    if (!target_ssid[0] || !target_password[0] ||
+        goform_set_wifi_info(target_ssid, target_password, response,
+                             sizeof(response)) != 0 ||
+        goform_json_int(response, "result", &result) != 0 || result != 0) {
+        return -1;
+    }
     return 0;
 }
 
+int wifi_set_ssid(const char *ssid) {
+    if (!ssid || strlen(ssid) == 0) return -1;
+    return wifi_set_ap_info(ssid, NULL);
+}
+
 int wifi_set_password(const char *password) {
-    const char *band;
-    const char *conf_file;
-    
-    if (!password || strlen(password) < 8) {
-        printf("[WiFi] 密码长度必须至少8位\n");
-        return -1;
-    }
-    
-    printf("[WiFi] 设置密码\n");
-    
-    band = wifi_get_active_band();
-    if (!band) band = "5G";
-    conf_file = wifi_get_conf_file(band);
-    
-    wifi_write_config_param(conf_file, "wpa_passphrase", password);
-    
-    if (wifi_is_running()) {
-        return wifi_restart();
-    }
-    
-    return 0;
+    if (!password || strlen(password) < 8) return -1;
+    return wifi_set_ap_info(NULL, password);
 }
 
 int wifi_set_band(const char *band) {

@@ -51,6 +51,27 @@ static int is_digits(const char *value) {
   return 1;
 }
 
+static int url_encode(const char *value, char *out, size_t out_size) {
+  static const char hex[] = "0123456789ABCDEF";
+  size_t used = 0;
+
+  if (!value || !out || out_size == 0) return -1;
+  for (const unsigned char *p = (const unsigned char *)value; *p; p++) {
+    int safe = isalnum(*p) || *p == '-' || *p == '_' || *p == '.' || *p == '~';
+    size_t need = safe ? 1 : 3;
+    if (used + need >= out_size) return -1;
+    if (safe) {
+      out[used++] = (char)*p;
+    } else {
+      out[used++] = '%';
+      out[used++] = hex[*p >> 4];
+      out[used++] = hex[*p & 0x0F];
+    }
+  }
+  out[used] = '\0';
+  return 0;
+}
+
 static int build_headers(char *once, size_t once_size, char *timestamp,
                          size_t timestamp_size) {
   time_t now = time(NULL);
@@ -123,6 +144,39 @@ int goform_get_sim_info(char *response, size_t response_size) {
 
 int goform_get_package_info(char *response, size_t response_size) {
   return goform_get_cmd("getDevicePkgInfo", response, response_size);
+}
+
+int goform_build_wifi_query(const char *ssid, const char *password, char *query,
+                            size_t query_size) {
+  char encoded_ssid[256];
+  char encoded_password[384];
+  int written;
+
+  if (!ssid || !password || !*ssid || !*password || !query || query_size == 0 ||
+      url_encode(ssid, encoded_ssid, sizeof(encoded_ssid)) != 0 ||
+      url_encode(password, encoded_password, sizeof(encoded_password)) != 0) {
+    return -1;
+  }
+  written = snprintf(query, query_size,
+                     "goformId=setapinfo&ap_ssid=%s&ap_ssidpwd=%s&"
+                     "admin=admin&pwd=admin",
+                     encoded_ssid, encoded_password);
+  return written >= 0 && (size_t)written < query_size ? 0 : -1;
+}
+
+int goform_set_wifi_info(const char *ssid, const char *password, char *response,
+                         size_t response_size) {
+  char query[768];
+  char url[1024];
+
+  if (goform_build_wifi_query(ssid, password, query, sizeof(query)) != 0 ||
+      !response || response_size == 0 ||
+      snprintf(url, sizeof(url), GOFORM_BASE
+               "/goform/goform_set_cmd_process?%s", query) >=
+          (int)sizeof(url)) {
+    return -1;
+  }
+  return curl_get(url, response, response_size);
 }
 
 int goform_check_real_name(const char *operator_id, const char *device_id,

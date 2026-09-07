@@ -935,8 +935,11 @@ void handle_wifi_config(struct mg_connection *c, struct mg_http_message *hm) {
 
     /* 应用配置 */
     int changed = 0;
-    if (strlen(ssid) > 0 && wifi_set_ssid(ssid) == 0) changed++;
-    if (strlen(password) >= 8 && wifi_set_password(password) == 0) changed++;
+    if ((strlen(ssid) > 0 || strlen(password) >= 8) &&
+        wifi_set_ap_info(strlen(ssid) > 0 ? ssid : NULL,
+                         strlen(password) >= 8 ? password : NULL) == 0) {
+        changed++;
+    }
     if (strlen(band) > 0 && wifi_set_band(band) == 0) changed++;
     if (channel > 0 && wifi_set_channel(channel) == 0) changed++;
     if (hidden >= 0 && wifi_set_hidden(hidden) == 0) changed++;

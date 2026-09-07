@@ -2,9 +2,11 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { getWifiStatus, setWifiConfig, enableWifi, disableWifi, setWifiBand } from '../composables/useApi'
 import { useToast } from '../composables/useToast'
+import { useConfirm } from '../composables/useConfirm'
 import { emit as emitEvent } from '../composables/useEventBus'
 
 const { success, error } = useToast()
+const { confirm } = useConfirm()
 
 // WiFi状态
 const wifiStatus = ref({
@@ -34,9 +36,6 @@ const bandOptions = [
   { value: '5G', label: '5GHz', icon: 'fa-bolt', desc: '速度快，干扰少' }
 ]
 
-// 最大连接数选项（最大32）
-const maxClientsOptions = [8, 16, 24, 32]
-
 // 获取WiFi状态
 async function fetchStatus() {
   loading.value = true
@@ -63,6 +62,10 @@ async function fetchStatus() {
 
 // 切换WiFi开关
 async function toggleWifi() {
+  if (!await confirm({
+    title: wifiStatus.value.enabled ? '关闭 WiFi' : '开启 WiFi',
+    message: '设备网络状态会改变，确认继续吗？'
+  })) return
   saving.value = true
   try {
     if (wifiStatus.value.enabled) {
@@ -91,6 +94,10 @@ async function toggleWifi() {
 // 切换频段
 async function changeBand(newBand) {
   if (newBand === wifiStatus.value.band || switching.value) return
+  if (!await confirm({
+    title: '切换 WiFi 频段',
+    message: `将切换到 ${newBand}，当前连接可能会短暂中断。`
+  })) return
   
   switching.value = true
   try {
@@ -134,12 +141,17 @@ async function saveConfig() {
     error('密码至少需要8位')
     return
   }
+  if (!await confirm({
+    title: '保存 WiFi 设置',
+    message: form.value.password
+      ? '将通过设备原生接口更新 WiFi 名称和密码，设备可能短暂断网。'
+      : '将通过设备原生接口更新 WiFi 名称，设备可能短暂断网。'
+  })) return
   
   saving.value = true
   try {
     const config = {
-      ssid: form.value.ssid.trim(),
-      max_clients: form.value.max_clients
+      ssid: form.value.ssid.trim()
     }
     if (form.value.password && form.value.password.length >= 8) {
       config.password = form.value.password
@@ -329,16 +341,7 @@ onMounted(() => {
           </p>
         </div>
         
-        <!-- 最大连接数 -->
-        <div>
-          <label class="block text-slate-500 dark:text-white/50 text-sm mb-1">最大连接数</label>
-          <select v-model="form.max_clients" :disabled="saving"
-            class="w-full px-4 py-3 bg-slate-50 dark:bg-white/10 border border-slate-200 dark:border-white/20 rounded-xl text-slate-900 dark:text-white focus:border-indigo-400 focus:ring-2 focus:ring-indigo-400/20 transition-all disabled:opacity-50 text-sm">
-            <option v-for="n in maxClientsOptions" :key="n" :value="n" class="bg-white dark:bg-slate-800">
-              {{ n }} 台设备
-            </option>
-          </select>
-        </div>
+        <p class="text-xs text-slate-400">最大连接数由设备网络服务管理，本页面不写入本地 hostapd 配置。</p>
         
         <!-- 保存按钮 -->
         <button @click="saveConfig" :disabled="saving || (form.password && form.password.length > 0 && form.password.length < 8)"
@@ -358,4 +361,3 @@ onMounted(() => {
     </div>
   </div>
 </template>
-

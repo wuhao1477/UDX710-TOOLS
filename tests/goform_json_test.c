@@ -25,7 +25,17 @@ static void test_device_info_fields(void) {
   assert(goform_json_int(json, "current", &value) != 0);
 }
 
+static void test_wifi_query_builder(void) {
+  char query[256];
+  assert(goform_build_wifi_query("wifi name", "p@ssword!", query,
+                                sizeof(query)) == 0);
+  assert(strcmp(query,
+                "goformId=setapinfo&ap_ssid=wifi%20name&"
+                "ap_ssidpwd=p%40ssword%21&admin=admin&pwd=admin") == 0);
+}
+
 int main(void) {
   test_device_info_fields();
+  test_wifi_query_builder();
   return 0;
 }

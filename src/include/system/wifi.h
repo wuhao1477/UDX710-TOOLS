@@ -63,6 +63,7 @@ int wifi_set_ssid(const char *ssid);
  * @return 0 成功, -1 失败
  */
 int wifi_set_password(const char *password);
+int wifi_set_ap_info(const char *ssid, const char *password);
 
 /**
  * @brief 切换WiFi频段
