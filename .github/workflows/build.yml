@@ -14,29 +14,15 @@ jobs:
 
       - name: Install dependencies
         run: |
-          curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
           sudo apt-get update
-          sudo apt-get install -y nodejs
-
-      - name: Cache cross compiler (aarch64)
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/tools/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu
-          key: gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu
-
-      - name: Configure cross compiler (aarch64)
-        run: |
-          mkdir -p $GITHUB_WORKSPACE/tools
-          if [ ! -d "$GITHUB_WORKSPACE/tools/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu" ]; then
-            wget https://releases.linaro.org/components/toolchain/binaries/7.5-2019.12/aarch64-linux-gnu/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu.tar.xz
-            tar xf gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu.tar.xz -C $GITHUB_WORKSPACE/tools
-          fi
-          echo "PATH=$PATH:$GITHUB_WORKSPACE/tools/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu/bin" >> $GITHUB_ENV
+          sudo apt-get install -y nodejs gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          corepack enable
 
       - name: build web
         run: |
           cd web
-          npm install && npm run build
+          pnpm install --lockfile=false --ignore-scripts
+          pnpm run build
 
       - name: build server
         run: |
