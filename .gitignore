@@ -24,6 +24,7 @@ npm-debug.log*
 *.o
 *.obj
 *.exe
+tests/device_profile_test
 
 # Temporary files
 tmp/
