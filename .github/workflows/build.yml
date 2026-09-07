@@ -15,9 +15,29 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y nodejs gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          sudo apt-get install -y nodejs xz-utils
           corepack enable
           corepack prepare pnpm@10.6.5 --activate
+
+      - name: Cache cross compiler (aarch64)
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/tools/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu
+          key: gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu-glibc-2.25
+
+      - name: Configure cross compiler (aarch64)
+        run: |
+          set -e
+          toolchain_root="$GITHUB_WORKSPACE/tools/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu"
+          archive="$GITHUB_WORKSPACE/tools/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu.tar.xz"
+          if [ ! -x "$toolchain_root/bin/aarch64-linux-gnu-gcc" ]; then
+            curl -fsSL --retry 3 \
+              https://media.githubusercontent.com/media/tiiuae/rpi4-64-sel4-u-boot-build/master/tools/linaro/aarch64-linux-gnu/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu.tar.xz \
+              -o "$archive"
+            echo "3b6465fb91564b54bbdf9578b4cc3aa198dd363f7a43820eab06ea2932c8e0bf  $archive" | sha256sum -c -
+            tar -xJf "$archive" -C "$GITHUB_WORKSPACE/tools"
+          fi
+          echo "PATH=$PATH:$toolchain_root/bin" >> "$GITHUB_ENV"
 
       - name: build web
         run: |
