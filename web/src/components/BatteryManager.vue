@@ -1,11 +1,13 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getChargeConfig, setChargeConfig, chargeOn, chargeOff } from '../composables/useApi'
 import { useToast } from '../composables/useToast'
 
 const { t } = useI18n()
 const { success, error: showError } = useToast()
+const capabilities = inject('capabilities', ref(null))
+const hasBattery = computed(() => capabilities.value?.power?.battery_supported !== false)
 
 const batteryStatus = ref({ level: 0, charging: false, health: '-', temperature: 0, voltage: 0, current: 0 })
 const chargeConfig = ref({ enabled: false, startLevel: 20, stopLevel: 80 })
@@ -67,6 +69,10 @@ async function toggleCharging() {
 }
 
 async function fetchData() {
+  if (!hasBattery.value) {
+    loading.value = false
+    return
+  }
   try {
     const res = await getChargeConfig()
     if (res.Code === 0 && res.Data) {
@@ -88,7 +94,13 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 
 <template>
   <div class="space-y-6">
-    <div v-if="loading" class="flex items-center justify-center py-20">
+    <div v-if="capabilities && !hasBattery" class="rounded-3xl bg-white/95 dark:bg-white/5 border border-slate-200/60 dark:border-white/10 p-8 text-center">
+      <i class="fas fa-plug text-4xl text-blue-400 mb-4"></i>
+      <h2 class="text-xl font-bold text-slate-900 dark:text-white">外部供电设备</h2>
+      <p class="mt-2 text-slate-500 dark:text-white/50">当前设备没有内置电池，充电控制不适用。</p>
+    </div>
+
+    <div v-else-if="loading" class="flex items-center justify-center py-20">
       <div class="relative">
         <div class="w-20 h-20 border-4 border-green-500/30 border-t-green-500 rounded-full animate-spin"></div>
         <div class="absolute inset-0 flex items-center justify-center"><i class="fas fa-battery-half text-green-400 text-2xl"></i></div>

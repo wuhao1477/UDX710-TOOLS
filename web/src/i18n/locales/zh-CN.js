@@ -59,6 +59,8 @@
   menu: {
     monitor: '系统监控',
     network: '网络管理',
+    wifi: 'WiFi管理',
+    devices: '接入设备',
     netif: '网络接口',
     apn: 'APN配置',
     advanced: '高级网络',
@@ -1295,6 +1297,5 @@
     factoryResetFailed: '恢复出厂设置失败'
   }
 }
-
 
 

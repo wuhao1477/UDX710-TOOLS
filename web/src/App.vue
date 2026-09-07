@@ -3,6 +3,8 @@ import { ref, provide, onMounted, onUnmounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SystemMonitor from './components/SystemMonitor.vue'
 import NetworkManager from './components/NetworkManager.vue'
+import WifiManager from './components/WifiManager.vue'
+import DeviceManager from './components/DeviceManager.vue'
 import AdvancedNetwork from './components/AdvancedNetwork.vue'
 import SmsManager from './components/SmsManager.vue'
 import TrafficStats from './components/TrafficStats.vue'
@@ -22,7 +24,7 @@ import GlobalConfirm from './components/GlobalConfirm.vue'
 import UpdateNotification from './components/UpdateNotification.vue'
 import SecuritySetup from './components/SecuritySetup.vue'
 import ForgotPasswordModal from './components/ForgotPasswordModal.vue'
-import { isLoggedIn, authGetStatus, clearAuthToken, authLogin, getSecurityStatus } from './composables/useApi'
+import { isLoggedIn, authGetStatus, clearAuthToken, authLogin, getSecurityStatus, getCapabilities } from './composables/useApi'
 import { useToast } from './composables/useToast'
 
 // i18n
@@ -106,6 +108,7 @@ function handleSecuritySetup() {
   securitySet.value = true
   success(t('security.setupSuccess'))
   fetchSystemInfo()
+  fetchCapabilities()
   startRefreshInterval()
 }
 
@@ -135,6 +138,7 @@ async function handleLogin() {
       await checkSecurityStatus()
       if (securitySet.value) {
         fetchSystemInfo()
+        fetchCapabilities()
         startRefreshInterval()
       }
     } else {
@@ -273,16 +277,28 @@ function handleMenuClick(menuId) {
 
 // 系统信息数据
 const systemInfo = ref({})
+const capabilities = ref(null)
 const loading = ref(false)
 const lastUpdate = ref('')
 
 provide('systemInfo', systemInfo)
+provide('capabilities', capabilities)
 provide('loading', loading)
+
+async function fetchCapabilities() {
+  try {
+    capabilities.value = await getCapabilities()
+  } catch (error) {
+    console.error('获取设备能力失败:', error)
+  }
+}
 
 // 菜单配置 - 使用i18n key
 const menuItems = [
   { id: 'monitor', labelKey: 'menu.monitor', icon: 'fa-tachometer-alt', color: 'from-blue-500 to-cyan-400' },
   { id: 'network', labelKey: 'menu.network', icon: 'fa-network-wired', color: 'from-purple-500 to-pink-400' },
+  { id: 'wifi', labelKey: 'menu.wifi', icon: 'fa-wifi', color: 'from-indigo-500 to-purple-400' },
+  { id: 'devices', labelKey: 'menu.devices', icon: 'fa-users', color: 'from-cyan-500 to-blue-400' },
   { id: 'netif', labelKey: 'menu.netif', icon: 'fa-ethernet', color: 'from-teal-500 to-cyan-400' },
   { id: 'apn', labelKey: 'menu.apn', icon: 'fa-globe', color: 'from-teal-500 to-cyan-400' },
   { id: 'advanced', labelKey: 'menu.advanced', icon: 'fa-tower-cell', color: 'from-cyan-500 to-blue-500' },
@@ -357,6 +373,7 @@ onMounted(async () => {
   // 如果已登录且密保已设置，开始获取系统信息
   if (isAuthenticated.value && securitySet.value) {
     fetchSystemInfo()
+    fetchCapabilities()
     startRefreshInterval()
   }
 })
@@ -681,6 +698,8 @@ onUnmounted(() => {
         <Transition v-else name="fade" mode="out-in">
           <SystemMonitor v-if="activeMenu === 'monitor'" key="monitor" />
           <NetworkManager v-else-if="activeMenu === 'network'" key="network" />
+          <WifiManager v-else-if="activeMenu === 'wifi'" key="wifi" />
+          <DeviceManager v-else-if="activeMenu === 'devices'" key="devices" />
           <AdvancedNetwork v-else-if="activeMenu === 'advanced'" key="advanced" />
           <SmsManager v-else-if="activeMenu === 'sms'" key="sms" />
           <TrafficStats v-else-if="activeMenu === 'traffic'" key="traffic" />

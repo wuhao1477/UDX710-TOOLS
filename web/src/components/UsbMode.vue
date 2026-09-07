@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, inject, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { getUsbMode, setUsbMode, usbAdvanceSwitch, deviceControl } from '../composables/useApi'
 import { useToast } from '../composables/useToast'
@@ -8,6 +8,10 @@ import { useConfirm } from '../composables/useConfirm'
 const { t } = useI18n()
 const { success, error } = useToast()
 const { confirm } = useConfirm()
+const capabilities = inject('capabilities', ref(null))
+const usbSwitchSupported = computed(() =>
+  capabilities.value?.typec?.mode_switch_supported !== false
+)
 
 const loading = ref(null) // 当前加载的按钮标识
 const currentMode = ref(null) // 当前硬件模式
@@ -53,6 +57,10 @@ async function fetchCurrentMode() {
 
 // 热切换USB模式
 async function handleHotSwitch(mode) {
+  if (!usbSwitchSupported.value) {
+    error('当前 Type-C 组合不支持通用热切换')
+    return
+  }
   const modeValue = modeIdToValue[mode.id]
   if (!modeValue || hotSwitching.value) return
   
@@ -129,6 +137,10 @@ const modes = [
 ]
 
 async function handleSwitch(mode, permanent) {
+  if (!usbSwitchSupported.value) {
+    error('当前 Type-C 组合不支持通用模式切换')
+    return
+  }
   const btnKey = `${mode.id}_${permanent ? 'perm' : 'temp'}`
   if (loading.value) return
 
@@ -173,6 +185,10 @@ async function handleSwitch(mode, permanent) {
 
 <template>
   <div class="space-y-6">
+    <div v-if="capabilities && !usbSwitchSupported" class="rounded-2xl bg-amber-500/10 border border-amber-500/30 p-4 text-amber-500">
+      当前设备使用厂商 RNDIS/ADB/串口组合，只显示状态，不执行通用 USB 模式切换。
+    </div>
+
     <!-- 标题卡片 + 当前模式显示 -->
     <div class="relative overflow-hidden rounded-3xl bg-gradient-to-br from-indigo-50/80 via-purple-50/60 to-pink-50/40 dark:from-indigo-600/20 dark:via-purple-600/20 dark:to-pink-600/20 border border-slate-200/60 dark:border-white/10 p-6 shadow-xl">
       <div class="absolute top-0 right-0 w-64 h-64 bg-purple-500/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
@@ -230,7 +246,7 @@ async function handleSwitch(mode, permanent) {
             <!-- 热切换按钮（立即生效） -->
             <button
               @click="handleHotSwitch(mode)"
-              :disabled="loading !== null || currentMode === modeIdToValue[mode.id]"
+              :disabled="!usbSwitchSupported || loading !== null || currentMode === modeIdToValue[mode.id]"
               :class="`w-full py-3 px-4 rounded-xl bg-gradient-to-r from-violet-500 to-purple-600 text-white font-medium text-sm shadow-lg shadow-violet-500/30 hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2`"
             >
               <font-awesome-icon v-if="loading === `${mode.id}_hot`" icon="spinner" spin />
@@ -241,7 +257,7 @@ async function handleSwitch(mode, permanent) {
             <!-- 临时切换按钮 -->
             <button
               @click="handleSwitch(mode, false)"
-              :disabled="loading !== null"
+              :disabled="!usbSwitchSupported || loading !== null"
               :class="`w-full py-3 px-4 rounded-xl bg-gradient-to-r ${mode.btnTemp} text-white font-medium text-sm shadow-lg ${mode.shadow} hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2`"
             >
               <font-awesome-icon v-if="loading === `${mode.id}_temp`" icon="spinner" spin />
@@ -251,7 +267,7 @@ async function handleSwitch(mode, permanent) {
             <!-- 永久切换按钮 -->
             <button
               @click="handleSwitch(mode, true)"
-              :disabled="loading !== null"
+              :disabled="!usbSwitchSupported || loading !== null"
               :class="`w-full py-3 px-4 rounded-xl bg-gradient-to-r ${mode.btnPerm} text-white font-medium text-sm shadow-lg hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2`"
             >
               <font-awesome-icon v-if="loading === `${mode.id}_perm`" icon="spinner" spin />

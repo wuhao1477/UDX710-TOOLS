@@ -59,6 +59,8 @@ export default {
   menu: {
     monitor: 'System',
     network: 'Network',
+    wifi: 'WiFi',
+    devices: 'Clients',
     netif: 'Interfaces',
     apn: 'APN Config',
     advanced: 'Advanced',
@@ -1280,4 +1282,3 @@ export default {
     factoryResetFailed: 'Factory reset failed'
   }
 }
-

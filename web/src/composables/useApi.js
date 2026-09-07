@@ -115,6 +115,89 @@ export async function submitActivationKey(key) {
   })
 }
 
+// ==================== 设备能力 API ====================
+
+export async function getCapabilities() {
+  return request('/api/capabilities')
+}
+
+// ==================== WiFi API ====================
+
+export async function getWifiStatus() {
+  return request('/api/wifi/status')
+}
+
+export async function setWifiConfig(config) {
+  return request('/api/wifi/config', {
+    method: 'POST',
+    body: JSON.stringify(config)
+  })
+}
+
+export async function enableWifi(band) {
+  return request('/api/wifi/enable', {
+    method: 'POST',
+    body: JSON.stringify({ band })
+  })
+}
+
+export async function disableWifi() {
+  return request('/api/wifi/disable', { method: 'POST' })
+}
+
+export async function setWifiBand(band) {
+  return request('/api/wifi/band', {
+    method: 'POST',
+    body: JSON.stringify({ band })
+  })
+}
+
+export async function getWifiClients() {
+  return request('/api/wifi/clients')
+}
+
+export async function getWifiBlacklist() {
+  return request('/api/wifi/blacklist')
+}
+
+export async function addToWifiBlacklist(mac) {
+  return request('/api/wifi/blacklist', {
+    method: 'POST',
+    body: JSON.stringify({ mac })
+  })
+}
+
+export async function removeFromWifiBlacklist(mac) {
+  return request('/api/wifi/blacklist/' + encodeURIComponent(mac), {
+    method: 'DELETE'
+  })
+}
+
+export async function clearWifiBlacklist() {
+  return request('/api/wifi/blacklist', { method: 'DELETE' })
+}
+
+export async function getWifiWhitelist() {
+  return request('/api/wifi/whitelist')
+}
+
+export async function addToWifiWhitelist(mac) {
+  return request('/api/wifi/whitelist', {
+    method: 'POST',
+    body: JSON.stringify({ mac })
+  })
+}
+
+export async function removeFromWifiWhitelist(mac) {
+  return request('/api/wifi/whitelist/' + encodeURIComponent(mac), {
+    method: 'DELETE'
+  })
+}
+
+export async function clearWifiWhitelist() {
+  return request('/api/wifi/whitelist', { method: 'DELETE' })
+}
+
 // ==================== 网络管理API ====================
 
 // 切换飞行模式
