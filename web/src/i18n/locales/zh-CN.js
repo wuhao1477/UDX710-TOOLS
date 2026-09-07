@@ -61,7 +61,6 @@
     network: '网络管理',
     wifi: 'WiFi管理',
     devices: '接入设备',
-    builtinCards: '内置卡运营商',
     adb: 'ADB 管理',
     netif: '网络接口',
     apn: 'APN配置',
