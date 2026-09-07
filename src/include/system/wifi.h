@@ -95,6 +95,10 @@ int wifi_reload(void);
 /* WiFi客户端信息结构体 */
 typedef struct {
     char mac[18];           /* MAC地址 xx:xx:xx:xx:xx:xx */
+    char ipv4[40];          /* IPv4地址 */
+    char ipv6[80];          /* IPv6地址 */
+    char interface[32];     /* 实际桥接接口 */
+    char access_type[16];   /* wifi/usb/rj45/bridge/unknown */
     unsigned long rx_bytes; /* 接收字节数（客户端上传） */
     unsigned long tx_bytes; /* 发送字节数（客户端下载） */
     int signal;             /* 信号强度 (dBm, 负值) */
@@ -174,4 +178,3 @@ int wifi_whitelist_list(char macs[][18], int max_count);
 #endif
 
 #endif /* WIFI_H */
-

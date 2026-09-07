@@ -59,11 +59,19 @@ function formatRate(kbps) {
   return `${(kbps / 1000).toFixed(1)} Mbps`
 }
 
+function accessTypeLabel(type) {
+  return { wifi: 'Wi‑Fi', usb: 'USB', rj45: 'RJ45', bridge: '网桥' }[type] || '未知'
+}
+
+function deviceIps(device) {
+  return [device.ipv4, device.ipv6].filter(Boolean).join(' / ') || '-'
+}
+
 async function loadData() {
   loading.value = true
   try {
     const [clientsRes, blacklistRes, whitelistRes] = await Promise.all([
-      getWifiClients().catch(() => []),
+      getWifiClients(),
       getWifiBlacklist().catch(() => ({ blacklist: [] })),
       getWifiWhitelist().catch(() => ({ whitelist: [] }))
     ])
@@ -71,7 +79,10 @@ async function loadData() {
     clients.value = Array.isArray(clientsRes) ? clientsRes : (clientsRes.clients || [])
     blacklist.value = Array.isArray(blacklistRes) ? blacklistRes : (blacklistRes.blacklist || [])
     whitelist.value = Array.isArray(whitelistRes) ? whitelistRes : (whitelistRes.whitelist || [])
-  } catch (e) { error('加载数据失败') }
+  } catch (e) {
+    clients.value = []
+    error(e.message || '获取接入设备失败')
+  }
   finally { loading.value = false }
 }
 
@@ -185,6 +196,8 @@ onUnmounted(() => {
         <thead>
           <tr class="bg-slate-50 dark:bg-white/5 border-b border-slate-200 dark:border-white/10">
             <th class="text-left py-3 px-4 text-slate-500 dark:text-white/50 text-sm font-medium">MAC地址</th>
+            <th class="text-left py-3 px-4 text-slate-500 dark:text-white/50 text-sm font-medium">接入方式</th>
+            <th class="text-left py-3 px-4 text-slate-500 dark:text-white/50 text-sm font-medium">IP地址</th>
             <th v-if="activeTab === 'all'" class="text-center py-3 px-4 text-slate-500 dark:text-white/50 text-sm font-medium">上传速率</th>
             <th v-if="activeTab === 'all'" class="text-center py-3 px-4 text-slate-500 dark:text-white/50 text-sm font-medium">下载速率</th>
             <th v-if="activeTab === 'all'" class="text-center py-3 px-4 text-slate-500 dark:text-white/50 text-sm font-medium">总速率</th>
@@ -203,6 +216,11 @@ onUnmounted(() => {
                 <span class="font-mono text-slate-900 dark:text-white text-sm">{{ device.mac }}</span>
               </div>
             </td>
+            <td class="py-3 px-4">
+              <span class="px-2 py-1 rounded-lg bg-blue-500/10 text-blue-500 text-xs">{{ accessTypeLabel(device.access_type) }}</span>
+              <span v-if="device.interface" class="ml-2 text-xs text-slate-400">{{ device.interface }}</span>
+            </td>
+            <td class="py-3 px-4 text-sm text-slate-600 dark:text-white/70 font-mono">{{ deviceIps(device) }}</td>
             <td v-if="activeTab === 'all'" class="py-3 px-4 text-center">
               <span class="text-green-500 text-sm font-medium"><font-awesome-icon icon="arrow-up" class="mr-1 text-xs" />{{ formatRate(device.tx_bytes) }}</span>
             </td>
@@ -263,7 +281,8 @@ onUnmounted(() => {
             <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500/20 to-cyan-500/20 flex items-center justify-center">
               <font-awesome-icon icon="laptop" class="text-blue-500" />
             </div>
-            <p class="font-mono text-slate-900 dark:text-white text-sm font-medium">{{ device.mac }}</p>
+          <p class="font-mono text-slate-900 dark:text-white text-sm font-medium">{{ device.mac }}</p>
+          <p class="text-xs text-blue-500">{{ accessTypeLabel(device.access_type) }} · {{ deviceIps(device) }}</p>
           </div>
           <font-awesome-icon :icon="expandedMac === device.mac ? 'chevron-up' : 'chevron-down'" class="text-slate-400 dark:text-white/40 text-sm" />
         </div>

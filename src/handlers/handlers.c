@@ -1039,9 +1039,11 @@ void handle_wifi_clients(struct mg_connection *c, struct mg_http_message *hm) {
     for (int i = 0; i < count; i++) {
         unsigned long total = clients[i].rx_bytes + clients[i].tx_bytes;
         offset += snprintf(json + offset, sizeof(json) - offset,
-            "%s{\"mac\":\"%s\",\"rx_bytes\":%lu,\"tx_bytes\":%lu,\"total\":%lu,\"signal\":%d,\"connected_time\":%d}",
+            "%s{\"mac\":\"%s\",\"ipv4\":\"%s\",\"ipv6\":\"%s\",\"interface\":\"%s\",\"access_type\":\"%s\",\"rx_bytes\":%lu,\"tx_bytes\":%lu,\"total\":%lu,\"signal\":%d,\"connected_time\":%d}",
             i > 0 ? "," : "",
-            clients[i].mac, clients[i].rx_bytes, clients[i].tx_bytes, total,
+            clients[i].mac, clients[i].ipv4, clients[i].ipv6,
+            clients[i].interface, clients[i].access_type, clients[i].rx_bytes,
+            clients[i].tx_bytes, total,
             clients[i].signal, clients[i].connected_time);
     }
 

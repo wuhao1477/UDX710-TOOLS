@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include "wifi.h"
+#include "wifi_clients.h"
 #include "exec_utils.h"
 #include "device_profile.h"
 
@@ -889,6 +890,149 @@ static int wifi_load_acl_from_db(void) {
 
 /* ==================== 客户端管理 ==================== */
 
+static WifiClient *find_client_by_mac(WifiClient *clients, int count,
+                                      const char *mac) {
+    for (int i = 0; i < count; i++) {
+        if (strcmp(clients[i].mac, mac) == 0) {
+            return &clients[i];
+        }
+    }
+    return NULL;
+}
+
+static WifiClient *ensure_client(WifiClient *clients, int *count, int max_count,
+                                 const char *mac) {
+    WifiClient *client = find_client_by_mac(clients, *count, mac);
+    if (client || *count >= max_count) {
+        return client;
+    }
+    client = &clients[*count];
+    memset(client, 0, sizeof(*client));
+    snprintf(client->mac, sizeof(client->mac), "%s", mac);
+    snprintf(client->interface, sizeof(client->interface), "tether");
+    snprintf(client->access_type, sizeof(client->access_type), "bridge");
+    (*count)++;
+    return client;
+}
+
+static void merge_client(WifiClient *target, const WifiClient *source) {
+    if (!target || !source) {
+        return;
+    }
+    if (source->ipv4[0]) {
+        snprintf(target->ipv4, sizeof(target->ipv4), "%s", source->ipv4);
+    }
+    if (source->ipv6[0]) {
+        snprintf(target->ipv6, sizeof(target->ipv6), "%s", source->ipv6);
+    }
+    if (source->interface[0] && strcmp(source->interface, "tether") != 0) {
+        snprintf(target->interface, sizeof(target->interface), "%s",
+                 source->interface);
+        snprintf(target->access_type, sizeof(target->access_type), "%s",
+                 source->access_type);
+    }
+}
+
+static void collect_arp_clients(WifiClient *clients, int max_count, int *count) {
+    static char output[8192];
+    char *line;
+    char *saveptr = NULL;
+
+    if (run_command(output, sizeof(output), "cat", "/proc/net/arp", NULL) !=
+        0) {
+        return;
+    }
+    line = strtok_r(output, "\n", &saveptr);
+    while (line) {
+        WifiClient parsed;
+        if (wifi_client_parse_arp_line(line, &parsed) == 0) {
+            WifiClient *target = ensure_client(clients, count, max_count,
+                                                parsed.mac);
+            merge_client(target, &parsed);
+        }
+        line = strtok_r(NULL, "\n", &saveptr);
+    }
+}
+
+static void collect_neighbor_clients(WifiClient *clients, int max_count,
+                                     int *count) {
+    static char output[8192];
+    char *line;
+    char *saveptr = NULL;
+
+    if (run_command(output, sizeof(output), "ip", "neigh", "show", "dev",
+                    "tether", NULL) != 0) {
+        return;
+    }
+    line = strtok_r(output, "\n", &saveptr);
+    while (line) {
+        WifiClient parsed;
+        if (wifi_client_parse_neigh_line(line, &parsed) == 0) {
+            WifiClient *target = ensure_client(clients, count, max_count,
+                                                parsed.mac);
+            merge_client(target, &parsed);
+        }
+        line = strtok_r(NULL, "\n", &saveptr);
+    }
+}
+
+typedef struct {
+    int port;
+    char interface[32];
+} BridgePort;
+
+static void collect_bridge_clients(WifiClient *clients, int max_count,
+                                   int *count) {
+    static char stp_output[8192];
+    static char fdb_output[8192];
+    BridgePort ports[16];
+    int port_count = 0;
+    char *line;
+    char *saveptr = NULL;
+
+    if (run_command(stp_output, sizeof(stp_output), "brctl", "showstp",
+                    "tether", NULL) == 0) {
+        line = strtok_r(stp_output, "\n", &saveptr);
+        while (line && port_count < 16) {
+            int port;
+            if (wifi_client_parse_bridge_port(line, ports[port_count].interface,
+                                              sizeof(ports[port_count].interface),
+                                              &port) == 0) {
+                ports[port_count].port = port;
+                port_count++;
+            }
+            line = strtok_r(NULL, "\n", &saveptr);
+        }
+    }
+
+    if (run_command(fdb_output, sizeof(fdb_output), "brctl", "showmacs",
+                    "tether", NULL) != 0) {
+        return;
+    }
+    saveptr = NULL;
+    line = strtok_r(fdb_output, "\n", &saveptr);
+    while (line) {
+        char mac[18];
+        int port;
+        int local;
+        if (wifi_client_parse_fdb_line(line, mac, sizeof(mac), &port, &local) ==
+                0 &&
+            !local) {
+            WifiClient *target = ensure_client(clients, count, max_count, mac);
+            for (int i = 0; target && i < port_count; i++) {
+                if (ports[i].port == port) {
+                    snprintf(target->interface, sizeof(target->interface), "%s",
+                             ports[i].interface);
+                    snprintf(target->access_type, sizeof(target->access_type),
+                             "%s", wifi_client_access_type(ports[i].interface));
+                    break;
+                }
+            }
+        }
+        line = strtok_r(NULL, "\n", &saveptr);
+    }
+}
+
 int wifi_get_clients(WifiClient *clients, int max_count) {
     static char output[8192];  /* 静态缓冲区，避免栈溢出 */
     char cmd[128];
@@ -923,6 +1067,9 @@ int wifi_get_clients(WifiClient *clients, int max_count) {
             memset(current, 0, sizeof(WifiClient));
             strncpy(current->mac, p, 17);
             current->mac[17] = '\0';
+            snprintf(current->interface, sizeof(current->interface), "%s",
+                     wifi_iface());
+            snprintf(current->access_type, sizeof(current->access_type), "wifi");
         }
         /* 解析属性 */
         else if (current) {
@@ -951,6 +1098,11 @@ int wifi_get_clients(WifiClient *clients, int max_count) {
     
     /* 保存最后一个客户端 */
     if (current && count < max_count) count++;
+
+    /* hostapd 在部分固件上不维护 station 表，补充网桥邻居和 FDB。 */
+    collect_arp_clients(clients, max_count, &count);
+    collect_neighbor_clients(clients, max_count, &count);
+    collect_bridge_clients(clients, max_count, &count);
     
     printf("[WiFi] 获取到 %d 个客户端\n", count);
     return count;
