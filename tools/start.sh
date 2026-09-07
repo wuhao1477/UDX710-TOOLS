@@ -18,6 +18,7 @@ if ! command -v start-stop-daemon >/dev/null 2>&1; then
     exit 1
 fi
 
+cd "$BASE_DIR"
 start-stop-daemon -S -b -m -p "$SERVER_PID" -x "$SERVER" -- 6677
 
 if [ -x "$WATCHER" ]; then
