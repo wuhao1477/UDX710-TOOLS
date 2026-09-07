@@ -8,3 +8,8 @@ done
 for route in /api/capabilities /api/led/status /api/led/control /api/wifi/status /api/wifi/config /api/wifi/clients /api/factory-reset; do
   grep -q "\"$route\"" src/handlers/http_server.c
 done
+
+test -f tools/start.sh
+test -f tools/rj45_bridge_watch.sh
+grep -q 'tools/start.sh' .github/workflows/build.yml
+grep -q 'tools/rj45_bridge_watch.sh' .github/workflows/build.yml

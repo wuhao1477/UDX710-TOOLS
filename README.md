@@ -15,7 +15,20 @@ This project provides two versions for different devices:
 | **UDX710 Generic** | UNISOC UDX710 Platform | `main` | ⭐ Basic Features | For most UDX710 devices |
 | **SZ50 Dedicated** | SZ50 MiFi Device | `SZ50` | 🌟 Full Features | Extra: LED Control, Key Listener, WiFi Control, Factory Reset, Client Management |
 
-> 💡 **Switch Version**: `git checkout SZ50` for SZ50 version, `git checkout main` for generic version
+> 💡 **Switch Version**: `git switch sz50` for the current-device build, `git switch main` for the generic version.
+
+### Current `sz50` device profile
+
+This branch targets the externally powered router-shaped UDX710 `marlin3e` device:
+
+- No internal battery; charging controls report as unsupported and the UI shows external power.
+- WiFi is detected from hostapd at runtime; the current device uses `wlan1` and `/mnt/data/hostapd_wlan1.conf`.
+- Cellular data uses `sipa_eth0` when available.
+- Type-C currently exposes vendor RNDIS + ADB + serial functions (`0x2dee:0x4d51`); the dashboard reports the mode but does not attempt generic USB switching.
+- RJ45 hardware is present, while the current firmware does not expose `eth0` or `/dev/seth_lte`; the dashboard distinguishes physical presence from usable networking.
+- `tools/start.sh` starts the server with `start-stop-daemon`; `tools/rj45_bridge_watch.sh` bridges a future `eth*`/`en*`/`lan*` interface when the device exposes one.
+
+The complete capability matrix is in [`tools/device-capabilities.md`](tools/device-capabilities.md).
 
 ### 📥 Download
 

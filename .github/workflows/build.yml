@@ -46,17 +46,14 @@ jobs:
       - name: dopack
         run: |
           mkdir -p output/6677
-          echo "#!/bin/sh" > start.sh
-          echo "cd /home/root/6677" >> start.sh
-          echo "chmod 755 *" >> start.sh
-          echo "./server &" >> start.sh
-          mv start.sh output/6677/
           cp -r web/dist output/6677/
           cp src/build/ofono-server output/6677/server
+          cp tools/start.sh output/6677/start.sh
+          cp tools/rj45_bridge_watch.sh output/6677/rj45_bridge_watch.sh
+          chmod 755 output/6677/server output/6677/start.sh output/6677/rj45_bridge_watch.sh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: udx710-tools
           path: output
-

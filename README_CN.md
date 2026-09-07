@@ -13,7 +13,20 @@
 | **UDX710 通用版** | 展锐UDX710平台通用 | `main` | ⭐ 基础功能集 | 适用于大多数UDX710设备 |
 | **SZ50 专用版** | SZ50随身WiFi | `SZ50` | 🌟 全功能支持 | 额外支持：LED灯控制、按键监听、WiFi控制、恢复出厂设置、设备接入管理 |
 
-> 💡 **切换版本**: `git checkout SZ50` 切换到SZ50专用版，`git checkout main` 切换到通用版
+> 💡 **切换版本**：当前设备版本使用 `git switch sz50`，通用版本使用 `git switch main`。
+
+### 当前 `sz50` 设备适配
+
+本分支面向外部供电、路由器形态的 UDX710 `marlin3e` 设备：
+
+- 没有内置电池；充电接口返回不适用，页面显示外部供电。
+- WiFi 从 hostapd 运行状态动态识别；当前设备使用 `wlan1` 和 `/mnt/data/hostapd_wlan1.conf`。
+- 蜂窝数据接口优先使用 `sipa_eth0`。
+- Type-C 当前为厂商 RNDIS + ADB + 串口组合（`0x2dee:0x4d51`）；页面显示状态，不执行通用 USB 模式切换。
+- RJ45 物理接口存在，但当前固件没有 `eth0` 或 `/dev/seth_lte`，页面会区分“物理存在”和“系统侧可用”。
+- `tools/start.sh` 使用 `start-stop-daemon` 启动服务；`tools/rj45_bridge_watch.sh` 会在系统出现 `eth*`、`en*` 或 `lan*` 接口后加入 `tether` 网桥。
+
+完整能力说明见 [`tools/device-capabilities.md`](tools/device-capabilities.md)。
 
 ### 📥 软件下载
 
