@@ -740,8 +740,8 @@ static void *telemetry_worker(void *arg) {
 int telemetry_init(const char *db_path) {
   if (g_initialized) return 0;
   if (db_init(db_path) != 0 || read_device_identity() != 0) return -1;
-  pthread_mutex_lock(&g_lock);
   load_config();
+  pthread_mutex_lock(&g_lock);
   g_stop = 0;
   g_initialized = 1;
   pthread_mutex_unlock(&g_lock);
@@ -831,14 +831,17 @@ int telemetry_get_config(TelemetryConfig *config) {
 }
 
 int telemetry_save_config(const TelemetryConfig *config, int clear_token) {
+  TelemetryConfig current;
   TelemetryConfig next;
 
   if (!config) return -1;
   pthread_mutex_lock(&g_lock);
+  current = g_config;
+  pthread_mutex_unlock(&g_lock);
   next = *config;
-  if (!config->token_present) next.token_present = g_config.token_present;
+  if (!config->token_present) next.token_present = current.token_present;
   if (!config->token_present) {
-    copy_string(next.group_token, sizeof(next.group_token), g_config.group_token);
+    copy_string(next.group_token, sizeof(next.group_token), current.group_token);
   }
   if (clear_token) {
     next.group_token[0] = '\0';
@@ -848,9 +851,9 @@ int telemetry_save_config(const TelemetryConfig *config, int clear_token) {
       config_set_int("telemetry_interval_sec", next.interval_sec) != 0 ||
       config_set_text("telemetry_url", next.url) != 0 ||
       config_set_text("telemetry_group_token", next.group_token) != 0) {
-    pthread_mutex_unlock(&g_lock);
     return -1;
   }
+  pthread_mutex_lock(&g_lock);
   g_config = next;
   pthread_cond_signal(&g_ready);
   pthread_mutex_unlock(&g_lock);
