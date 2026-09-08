@@ -4,7 +4,7 @@ CC = aarch64-linux-gnu-gcc
 # 移除 -DDISABLE_PRINTF 以启用调试输出
 # 添加 -DDISABLE_PRINTF 禁用所有printf输出
 # 添加 -DMG_ENABLE_IPV6=1 启用IPv6支持
-CFLAGS = -Wall -O2 -g -DMG_ENABLE_LINES=0 -include debug.h
+CFLAGS = -Wall -O2 -g -DMG_ENABLE_LINES=0 -DMG_ENABLE_IPV6=1 -DMG_IPV6_V6ONLY=1 -include debug.h
 
 # GLib 库路径
 GLIB_DIR = ..

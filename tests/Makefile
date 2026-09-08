@@ -2,9 +2,9 @@ CC ?= cc
 CFLAGS ?= -std=c11 -Wall -Wextra -Werror
 CPPFLAGS = -I../src/include/system
 
-.PHONY: test clean notification_test sms_parser_test telemetry_codec_test
+.PHONY: test clean notification_test sms_parser_test telemetry_codec_test ipv6_listener_check
 
-test: device_profile_test builtin_card_rules_test goform_json_test wifi_clients_test notification_test sms_parser_test telemetry_codec_test
+test: device_profile_test builtin_card_rules_test goform_json_test wifi_clients_test notification_test sms_parser_test telemetry_codec_test ipv6_listener_check
 	./device_profile_test
 	./builtin_card_rules_test
 	./goform_json_test
@@ -12,6 +12,9 @@ test: device_profile_test builtin_card_rules_test goform_json_test wifi_clients_
 	./notification_test
 	./sms_parser_test
 	./telemetry_codec_test
+
+ipv6_listener_check:
+	sh check_ipv6_listener.sh
 
 device_profile_test: device_profile_test.c ../src/system/device_profile.c
 	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ $^

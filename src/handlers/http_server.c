@@ -544,6 +544,7 @@ static void http_handler(struct mg_connection *c, int ev, void *ev_data) {
 
 int http_server_start(const char *port) {
   char listen_addr[64];
+  struct mg_connection *listener;
 
   /* 初始化 D-Bus */
   if (init_dbus() != 0) {
@@ -599,12 +600,21 @@ int http_server_start(const char *port) {
   /* 初始化 mongoose */
   mg_mgr_init(&g_mgr);
 
-  /* 构建监听地址 - 使用 0.0.0.0 监听所有IPv4地址 */
+  /* 监听所有 IPv4 地址 */
   snprintf(listen_addr, sizeof(listen_addr), "http://0.0.0.0:%s", port);
 
-  /* 创建 HTTP 监听器 */
-  if (mg_http_listen(&g_mgr, listen_addr, http_handler, NULL) == NULL) {
+  listener = mg_http_listen(&g_mgr, listen_addr, http_handler, NULL);
+  if (listener == NULL) {
     printf("无法监听端口 %s\n", port);
+    mg_mgr_free(&g_mgr);
+    return -1;
+  }
+
+  /* 监听所有 IPv6 地址，并保持 IPv4/IPv6 监听互不冲突 */
+  snprintf(listen_addr, sizeof(listen_addr), "http://[::]:%s", port);
+  listener = mg_http_listen(&g_mgr, listen_addr, http_handler, NULL);
+  if (listener == NULL) {
+    printf("无法监听 IPv6 端口 %s\n", port);
     mg_mgr_free(&g_mgr);
     return -1;
   }
