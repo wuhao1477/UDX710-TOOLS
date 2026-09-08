@@ -89,6 +89,29 @@ export async function fetchSystemInfo() {
   return request('/api/info')
 }
 
+// 日志与遥测上传 API
+export async function getTelemetryConfig() {
+  return request('/api/telemetry/config')
+}
+
+export async function saveTelemetryConfig(config) {
+  return request('/api/telemetry/config', {
+    method: 'POST',
+    body: JSON.stringify(config)
+  })
+}
+
+export async function getTelemetryStatus() {
+  return request('/api/telemetry/status')
+}
+
+export async function testTelemetry(config = {}) {
+  return request('/api/telemetry/test', {
+    method: 'POST',
+    body: JSON.stringify(config)
+  })
+}
+
 // 清除系统缓存
 export async function clearCache() {
   return request('/api/clear_cache', { method: 'POST' })

@@ -2,6 +2,10 @@ import assert from 'node:assert/strict'
 import * as api from '../web/src/composables/useApi.js'
 
 assert.equal(typeof api.getCapabilities, 'function')
+assert.equal(typeof api.getTelemetryConfig, 'function')
+assert.equal(typeof api.saveTelemetryConfig, 'function')
+assert.equal(typeof api.getTelemetryStatus, 'function')
+assert.equal(typeof api.testTelemetry, 'function')
 assert.equal(typeof api.getWifiStatus, 'function')
 assert.equal(typeof api.setWifiConfig, 'function')
 assert.equal(typeof api.getWifiClients, 'function')

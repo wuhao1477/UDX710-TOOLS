@@ -5,6 +5,7 @@ import { deviceControl, getRebootConfig, setReboot, clearReboot, getSystemTime, 
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import AdbManager from './AdbManager.vue'
+import TelemetryUpload from './TelemetryUpload.vue'
 
 const { t } = useI18n()
 const { success, error } = useToast()
@@ -343,6 +344,8 @@ onUnmounted(() => {
 
 <template>
   <div class="space-y-4 sm:space-y-6">
+    <TelemetryUpload />
+
     <!-- 设备控制 -->
     <div class="rounded-2xl bg-white/95 dark:bg-white/5 backdrop-blur border border-slate-200/60 dark:border-white/10 p-6 shadow-lg shadow-slate-200/40 dark:shadow-black/20 hover:shadow-xl hover:shadow-slate-300/50 dark:hover:shadow-black/30 transition-all duration-300">
       <h3 class="text-slate-900 dark:text-white font-semibold mb-6 flex items-center">
