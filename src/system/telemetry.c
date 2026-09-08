@@ -36,6 +36,7 @@
 #define TELEMETRY_FRAGMENT_SIZE (1024U * 1024U)
 #define TELEMETRY_DEVICE_ID_SIZE 128
 #define TELEMETRY_BOOT_ID_SIZE 64
+#define TELEMETRY_DEFAULT_URL "https://udxlog.12240403.xyz/v1/ingest"
 
 typedef struct {
   char *data;
@@ -182,6 +183,9 @@ static void load_config(void) {
   g_config.enabled = config_get_int("telemetry_enabled", 0) ? 1 : 0;
   if (config_get_text("telemetry_url", value, sizeof(value)) == 0) {
     copy_string(g_config.url, sizeof(g_config.url), value);
+  }
+  if (g_config.url[0] == '\0') {
+    copy_string(g_config.url, sizeof(g_config.url), TELEMETRY_DEFAULT_URL);
   }
   if (config_get_text("telemetry_group_token", value, sizeof(value)) == 0) {
     copy_string(g_config.group_token, sizeof(g_config.group_token), value);
