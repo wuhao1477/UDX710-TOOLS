@@ -35,6 +35,20 @@ int telemetry_build_record(char *output, size_t output_size,
                            unsigned long long sequence, const char *type,
                            const char *source, const char *payload_json);
 
+int telemetry_init(const char *db_path);
+void telemetry_deinit(void);
+int telemetry_start_output_capture(void);
+void telemetry_stop_output_capture(void);
+int telemetry_get_config(TelemetryConfig *config);
+int telemetry_save_config(const TelemetryConfig *config, int clear_token);
+int telemetry_get_status(TelemetryStatus *status);
+int telemetry_test(const TelemetryConfig *config);
+void telemetry_capture_line(const char *source, const char *line);
+void telemetry_capture_at(const char *command, const char *response,
+                          int success);
+void telemetry_capture_command(const char *command, const char *output,
+                               int success);
+
 #ifdef __cplusplus
 }
 #endif

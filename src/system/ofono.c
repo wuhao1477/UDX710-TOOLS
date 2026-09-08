@@ -9,6 +9,7 @@
  */
 
 #include "ofono.h"
+#include "telemetry.h"
 #include "dbus_core.h"
 #include "sysinfo.h"
 #include <pthread.h>
@@ -285,6 +286,7 @@ int execute_at(const char *command, char **result) {
     break;
   }
 
+  telemetry_capture_at(command, *result ? *result : dbus_get_last_error(), rc == 0);
   pthread_mutex_unlock(&g_at_mutex);
   return rc;
 }

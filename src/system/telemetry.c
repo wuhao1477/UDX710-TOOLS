@@ -3,8 +3,20 @@
 #include "telemetry.h"
 
 #include "database.h"
+#include "apn.h"
+#include "charge.h"
+#include "device_profile.h"
 #include "exec_utils.h"
+#include "ipv6_proxy.h"
+#include "json_builder.h"
+#include "netif.h"
+#include "notification.h"
+#include "ofono.h"
+#include "rathole.h"
 #include "sysinfo.h"
+#include "traffic.h"
+#include "usb_mode.h"
+#include "wifi.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -44,10 +56,55 @@ static int g_sender_active;
 static unsigned long long g_sequence;
 static char g_device_id[TELEMETRY_DEVICE_ID_SIZE];
 static char g_boot_id[TELEMETRY_BOOT_ID_SIZE];
+static int g_output_pipe[2] = {-1, -1};
+static int g_saved_stdout = -1;
+static int g_saved_stderr = -1;
+static int g_output_stop;
+static int g_output_running;
+static pthread_t g_output_thread;
 
 static void copy_string(char *dst, size_t dst_size, const char *src) {
   if (!dst || dst_size == 0) return;
   snprintf(dst, dst_size, "%s", src ? src : "");
+}
+
+static void *output_reader(void *arg) {
+  char *line = NULL;
+  size_t length = 0;
+  size_t capacity = 0;
+  char chunk[1024];
+  (void)arg;
+
+  while (!g_output_stop) {
+    ssize_t count = read(g_output_pipe[0], chunk, sizeof(chunk));
+    if (count < 0 && errno == EINTR) continue;
+    if (count <= 0) break;
+    for (ssize_t i = 0; i < count; i++) {
+      if (length + 1 >= capacity) {
+        size_t next_capacity = capacity ? capacity * 2 : 2048;
+        char *next = (char *)realloc(line, next_capacity);
+        if (!next) {
+          length = 0;
+          continue;
+        }
+        line = next;
+        capacity = next_capacity;
+      }
+      if (chunk[i] == '\n') {
+        line[length] = '\0';
+        telemetry_capture_line("service", line);
+        length = 0;
+      } else if (chunk[i] != '\r') {
+        line[length++] = chunk[i];
+      }
+    }
+  }
+  if (length > 0 && line) {
+    line[length] = '\0';
+    telemetry_capture_line("service", line);
+  }
+  free(line);
+  return NULL;
 }
 
 static int config_get_text(const char *key, char *value, size_t value_size) {
@@ -392,28 +449,260 @@ static void send_pending(const TelemetryConfig *config) {
   free(pending.data);
 }
 
-static void collect_minimal_snapshot(const TelemetryConfig *config) {
-  char payload[256];
-  char record[1024];
-  TelemetryBuffer batch = {0};
-  double uptime = get_uptime();
+static void add_system_snapshot(JsonBuilder *json, const SystemInfo *info) {
+  json_key_obj_open(json, "system");
+  json_add_str(json, "hostname", info->hostname);
+  json_add_str(json, "sysname", info->sysname);
+  json_add_str(json, "release", info->release);
+  json_add_str(json, "version", info->version);
+  json_add_str(json, "machine", info->machine);
+  json_add_ulong(json, "total_ram", info->total_ram);
+  json_add_ulong(json, "free_ram", info->free_ram);
+  json_add_ulong(json, "cached_ram", info->cached_ram);
+  json_add_double(json, "cpu_usage", info->cpu_usage);
+  json_add_double(json, "uptime", info->uptime);
+  json_add_str(json, "bridge_status", info->bridge_status);
+  json_add_str(json, "sim_slot", info->sim_slot);
+  json_add_str(json, "signal_strength", info->signal_strength);
+  json_add_double(json, "thermal_temp", info->thermal_temp);
+  json_add_str(json, "power_status", info->power_status);
+  json_add_str(json, "power_source", info->power_source);
+  json_add_bool(json, "battery_supported", info->battery_supported);
+  json_add_str(json, "battery_health", info->battery_health);
+  json_add_int(json, "battery_capacity", (int)info->battery_capacity);
+  json_add_str(json, "ssid", info->ssid);
+  json_add_str(json, "select_network_mode", info->select_network_mode);
+  json_add_int(json, "is_activated", info->is_activated);
+  json_add_str(json, "serial", info->serial);
+  json_add_str(json, "network_mode", info->network_mode);
+  json_add_bool(json, "airplane_mode", info->airplane_mode);
+  json_add_str(json, "imei", info->imei);
+  json_add_str(json, "iccid", info->iccid);
+  json_add_str(json, "imsi", info->imsi);
+  json_add_str(json, "carrier", info->carrier);
+  json_add_str(json, "network_type", info->network_type);
+  json_add_str(json, "network_band", info->network_band);
+  json_add_int(json, "qci", info->qci);
+  json_add_int(json, "downlink_rate", info->downlink_rate);
+  json_add_int(json, "uplink_rate", info->uplink_rate);
+  json_obj_close(json);
+}
 
-  snprintf(payload, sizeof(payload), "{\"uptime\":%.3f}", uptime);
-  if (telemetry_build_record(record, sizeof(record), g_device_id, g_boot_id,
-                             g_sequence++, "snapshot", "system", payload) == 0 &&
-      buffer_append(&batch, record, strlen(record)) == 0) {
-    TelemetryBuffer pending = take_pending();
-    buffer_append(&batch, pending.data, pending.length);
-    free(pending.data);
-    pthread_mutex_lock(&g_lock);
-    g_sender_active = 1;
-    pthread_mutex_unlock(&g_lock);
-    update_result(send_gzip_fragment(config, batch.data, batch.length) == 0,
-                  "快照上传失败");
-    pthread_mutex_lock(&g_lock);
-    g_sender_active = 0;
-    pthread_mutex_unlock(&g_lock);
+static void add_interfaces_snapshot(JsonBuilder *json, NetInterface *interfaces,
+                                    int interface_count) {
+  json_arr_open(json, "interfaces");
+  for (int i = 0; i < interface_count; i++) {
+    json_arr_obj_open(json);
+    json_add_str(json, "name", interfaces[i].name);
+    json_add_str(json, "hwaddr", interfaces[i].hwaddr);
+    json_add_str(json, "inet_addr", interfaces[i].inet_addr);
+    json_add_str(json, "inet6_addr", interfaces[i].inet6_addr);
+    json_add_str(json, "mask", interfaces[i].mask);
+    json_add_bool(json, "is_up", interfaces[i].is_up);
+    json_add_bool(json, "monitoring", interfaces[i].monitoring);
+    if (interfaces[i].monitoring) {
+      NetifStats stats;
+      if (netif_get_stats(interfaces[i].name, &stats) == 0) {
+        json_key_obj_open(json, "rx");
+        json_add_long(json, "bytes_per_second", stats.rx.bytespersecond);
+        json_add_long(json, "packets_per_second", stats.rx.packetspersecond);
+        json_add_long(json, "bytes", stats.rx.bytes);
+        json_add_long(json, "packets", stats.rx.packets);
+        json_add_long(json, "total_bytes", stats.rx.totalbytes);
+        json_add_long(json, "total_packets", stats.rx.totalpackets);
+        json_obj_close(json);
+        json_key_obj_open(json, "tx");
+        json_add_long(json, "bytes_per_second", stats.tx.bytespersecond);
+        json_add_long(json, "packets_per_second", stats.tx.packetspersecond);
+        json_add_long(json, "bytes", stats.tx.bytes);
+        json_add_long(json, "packets", stats.tx.packets);
+        json_add_long(json, "total_bytes", stats.tx.totalbytes);
+        json_add_long(json, "total_packets", stats.tx.totalpackets);
+        json_obj_close(json);
+      }
+    }
+    json_obj_close(json);
   }
+  json_arr_close(json);
+}
+
+static void add_clients_snapshot(JsonBuilder *json, WifiClient *clients,
+                                 int client_count) {
+  json_arr_open(json, "clients");
+  for (int i = 0; i < client_count; i++) {
+    json_arr_obj_open(json);
+    json_add_str(json, "mac", clients[i].mac);
+    json_add_str(json, "ipv4", clients[i].ipv4);
+    json_add_str(json, "ipv6", clients[i].ipv6);
+    json_add_str(json, "interface", clients[i].interface);
+    json_add_str(json, "access_type", clients[i].access_type);
+    json_add_ulong(json, "rx_bytes", clients[i].rx_bytes);
+    json_add_ulong(json, "tx_bytes", clients[i].tx_bytes);
+    json_add_int(json, "signal", clients[i].signal);
+    json_add_int(json, "connected_time", clients[i].connected_time);
+    json_obj_close(json);
+  }
+  json_arr_close(json);
+}
+
+static void collect_minimal_snapshot(const TelemetryConfig *config) {
+  SystemInfo info;
+  DeviceProfile profile;
+  NetInterface interfaces[MAX_NET_INTERFACES];
+  WifiClient clients[64];
+  WifiConfig wifi;
+  ApnConfig apn;
+  RatholeConfig rathole;
+  RatholeStatus rathole_status;
+  IPv6ProxyConfig ipv6_config;
+  IPv6ProxyStatus ipv6_status;
+  NotificationWebhookConfig notification;
+  UsbAdbStatus adb;
+  JsonBuilder *json = NULL;
+  char *payload = NULL;
+  char *record = NULL;
+  TelemetryBuffer batch = {0};
+  TelemetryBuffer pending;
+  long long traffic_total = 0;
+  int data_active = 0;
+  int roaming_allowed = 0;
+  int is_roaming = 0;
+  int battery_capacity = 0;
+  int charging = 0;
+  int interface_count;
+  int client_count;
+  int usb_mode;
+  int record_size;
+
+  memset(&info, 0, sizeof(info));
+  memset(&profile, 0, sizeof(profile));
+  memset(&wifi, 0, sizeof(wifi));
+  memset(&apn, 0, sizeof(apn));
+  memset(&rathole, 0, sizeof(rathole));
+  memset(&rathole_status, 0, sizeof(rathole_status));
+  memset(&ipv6_config, 0, sizeof(ipv6_config));
+  memset(&ipv6_status, 0, sizeof(ipv6_status));
+  memset(&notification, 0, sizeof(notification));
+  memset(&adb, 0, sizeof(adb));
+  device_profile_refresh();
+  profile = *device_profile_get();
+  get_system_info(&info);
+  interface_count = netif_get_list(interfaces, MAX_NET_INTERFACES);
+  if (interface_count < 0) interface_count = 0;
+  client_count = wifi_get_clients(clients, 64);
+  if (client_count < 0) client_count = 0;
+  wifi_get_status(&wifi);
+  apn_get_config(&apn);
+  rathole_get_config(&rathole);
+  rathole_get_status(&rathole_status);
+  ipv6_proxy_get_config(&ipv6_config);
+  ipv6_proxy_get_status(&ipv6_status);
+  notification_get_webhook_config(&notification);
+  ofono_get_data_status(&data_active);
+  ofono_get_roaming_status(&roaming_allowed, &is_roaming);
+  charge_get_battery_status(&battery_capacity, &charging);
+  usb_adb_get_status(&adb);
+  usb_mode = usb_mode_get_current_hardware();
+  traffic_get_total_bytes(&traffic_total);
+
+  json = json_new();
+  if (!json) goto cleanup;
+  json_obj_open(json);
+  add_system_snapshot(json, &info);
+  json_key_obj_open(json, "device_profile");
+  json_add_str(json, "model", profile.model);
+  json_add_bool(json, "mains_powered", profile.mains_powered);
+  json_add_bool(json, "battery_supported", profile.battery_supported);
+  json_add_bool(json, "rj45_usable", profile.rj45_usable);
+  json_add_bool(json, "typec_present", profile.typec_present);
+  json_add_bool(json, "usb_rndis_available", profile.usb_rndis_available);
+  json_add_str(json, "wifi_iface", profile.wifi_iface);
+  json_add_str(json, "data_iface", profile.data_iface);
+  json_add_str(json, "rj45_iface", profile.rj45_iface);
+  json_obj_close(json);
+  add_interfaces_snapshot(json, interfaces, interface_count);
+  add_clients_snapshot(json, clients, client_count);
+  json_key_obj_open(json, "traffic");
+  json_add_long(json, "total_bytes", traffic_total);
+  json_obj_close(json);
+  json_key_obj_open(json, "wifi");
+  json_add_bool(json, "enabled", wifi.enabled);
+  json_add_str(json, "band", wifi.band);
+  json_add_str(json, "ssid", wifi.ssid);
+  json_add_int(json, "channel", wifi.channel);
+  json_add_str(json, "encryption", wifi.encryption);
+  json_add_bool(json, "hidden", wifi.hidden);
+  json_add_int(json, "max_clients", wifi.max_clients);
+  json_obj_close(json);
+  json_key_obj_open(json, "network");
+  json_add_bool(json, "data_active", data_active);
+  json_add_bool(json, "roaming_allowed", roaming_allowed);
+  json_add_bool(json, "is_roaming", is_roaming);
+  json_obj_close(json);
+  json_key_obj_open(json, "power");
+  json_add_int(json, "battery_capacity", battery_capacity);
+  json_add_bool(json, "charging", charging);
+  json_obj_close(json);
+  json_key_obj_open(json, "usb");
+  json_add_int(json, "mode", usb_mode);
+  json_add_int(json, "adb_daemon_running", adb.daemon_running);
+  json_add_int(json, "adb_usb_enabled", adb.usb_enabled);
+  json_add_int(json, "adb_wireless_enabled", adb.wireless_enabled);
+  json_add_int(json, "adb_wireless_port", adb.wireless_port);
+  json_obj_close(json);
+  json_key_obj_open(json, "apn");
+  json_add_int(json, "mode", apn.mode);
+  json_add_int(json, "template_id", apn.template_id);
+  json_add_int(json, "auto_start", apn.auto_start);
+  json_obj_close(json);
+  json_key_obj_open(json, "rathole");
+  json_add_str(json, "server_addr", rathole.server_addr);
+  json_add_int(json, "auto_start", rathole.auto_start);
+  json_add_int(json, "enabled", rathole.enabled);
+  json_add_bool(json, "running", rathole_status.running);
+  json_add_int(json, "service_count", rathole_status.service_count);
+  json_obj_close(json);
+  json_key_obj_open(json, "ipv6_proxy");
+  json_add_int(json, "enabled", ipv6_config.enabled);
+  json_add_int(json, "auto_start", ipv6_config.auto_start);
+  json_add_int(json, "send_enabled", ipv6_config.send_enabled);
+  json_add_int(json, "send_interval", ipv6_config.send_interval);
+  json_add_bool(json, "running", ipv6_status.running);
+  json_add_int(json, "rule_count", ipv6_status.rule_count);
+  json_add_str(json, "ipv6_addr", ipv6_status.ipv6_addr);
+  json_obj_close(json);
+  json_key_obj_open(json, "notification");
+  json_add_bool(json, "enabled", notification.enabled);
+  json_add_str(json, "platform", notification.platform);
+  json_obj_close(json);
+  json_obj_close(json);
+  payload = json_finish(json);
+  json = NULL;
+  if (!payload) goto cleanup;
+  record_size = (int)(strlen(payload) * 2 + 1024);
+  record = (char *)malloc((size_t)record_size);
+  if (!record || telemetry_build_record(record, (size_t)record_size, g_device_id,
+                                        g_boot_id, g_sequence++, "snapshot",
+                                        "device", payload) != 0 ||
+      buffer_append(&batch, record, strlen(record)) != 0) {
+    goto cleanup;
+  }
+  pending = take_pending();
+  buffer_append(&batch, pending.data, pending.length);
+  free(pending.data);
+  pthread_mutex_lock(&g_lock);
+  g_sender_active = 1;
+  pthread_mutex_unlock(&g_lock);
+  update_result(send_gzip_fragment(config, batch.data, batch.length) == 0,
+                "快照上传失败");
+  pthread_mutex_lock(&g_lock);
+  g_sender_active = 0;
+  pthread_mutex_unlock(&g_lock);
+
+cleanup:
+  if (json) json_free(json);
+  free(payload);
+  free(record);
   free(batch.data);
 }
 
@@ -464,6 +753,59 @@ int telemetry_init(const char *db_path) {
   }
   pthread_cond_signal(&g_ready);
   return 0;
+}
+
+int telemetry_start_output_capture(void) {
+  int thread_started = 0;
+
+  if (g_output_running) return 0;
+  if (pipe(g_output_pipe) != 0) return -1;
+  g_output_stop = 0;
+  g_saved_stdout = dup(STDOUT_FILENO);
+  g_saved_stderr = dup(STDERR_FILENO);
+  if (g_saved_stdout < 0 || g_saved_stderr < 0 ||
+      pthread_create(&g_output_thread, NULL, output_reader, NULL) != 0) {
+    if (g_saved_stdout >= 0) close(g_saved_stdout);
+    if (g_saved_stderr >= 0) close(g_saved_stderr);
+    if (g_output_pipe[0] >= 0) close(g_output_pipe[0]);
+    if (g_output_pipe[1] >= 0) close(g_output_pipe[1]);
+    g_output_pipe[0] = g_output_pipe[1] = -1;
+    return -1;
+  }
+  thread_started = 1;
+  if (dup2(g_output_pipe[1], STDOUT_FILENO) < 0 ||
+      dup2(g_output_pipe[1], STDERR_FILENO) < 0) {
+    g_output_stop = 1;
+    close(g_output_pipe[1]);
+    g_output_pipe[1] = -1;
+    if (thread_started) pthread_join(g_output_thread, NULL);
+    if (g_saved_stdout >= 0) dup2(g_saved_stdout, STDOUT_FILENO);
+    if (g_saved_stderr >= 0) dup2(g_saved_stderr, STDERR_FILENO);
+    if (g_saved_stdout >= 0) close(g_saved_stdout);
+    if (g_saved_stderr >= 0) close(g_saved_stderr);
+    close(g_output_pipe[0]);
+    g_output_pipe[0] = -1;
+    g_saved_stdout = g_saved_stderr = -1;
+    return -1;
+  }
+  close(g_output_pipe[1]);
+  g_output_pipe[1] = -1;
+  g_output_running = 1;
+  return 0;
+}
+
+void telemetry_stop_output_capture(void) {
+  if (!g_output_running) return;
+  g_output_stop = 1;
+  if (g_saved_stdout >= 0) dup2(g_saved_stdout, STDOUT_FILENO);
+  if (g_saved_stderr >= 0) dup2(g_saved_stderr, STDERR_FILENO);
+  if (g_saved_stdout >= 0) close(g_saved_stdout);
+  if (g_saved_stderr >= 0) close(g_saved_stderr);
+  g_saved_stdout = g_saved_stderr = -1;
+  pthread_join(g_output_thread, NULL);
+  close(g_output_pipe[0]);
+  g_output_pipe[0] = -1;
+  g_output_running = 0;
 }
 
 void telemetry_deinit(void) {

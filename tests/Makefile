@@ -25,7 +25,7 @@ goform_json_test: goform_json_test.c ../src/system/goform_client.c ../src/system
 wifi_clients_test: wifi_clients_test.c ../src/system/wifi_clients.c
 	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ $^
 
-notification_test: notification_test.c ../src/system/notification_rules.c ../src/system/exec_utils.c
+notification_test: notification_test.c telemetry_link_stub.c ../src/system/notification_rules.c ../src/system/exec_utils.c
 	$(CC) $(CFLAGS) -Wno-unused-parameter $(CPPFLAGS) -o $@ $^
 
 sms_parser_test: sms_parser_test.c ../src/system/sms_parser.c

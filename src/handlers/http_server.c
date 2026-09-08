@@ -25,6 +25,7 @@
 #include "system/rathole.h"
 #include "system/security.h"
 #include "traffic.h"
+#include "telemetry.h"
 #include "usb_mode.h"
 #include <glib.h>
 #include <signal.h>
@@ -585,6 +586,10 @@ int http_server_start(const char *port) {
     printf("警告: 密保模块初始化失败\n");
   }
 
+  if (telemetry_init("6677.db") != 0) {
+    printf("警告: 遥测上传模块初始化失败\n");
+  }
+
   /* 初始化 mongoose */
   mg_mgr_init(&g_mgr);
 
@@ -611,6 +616,7 @@ int http_server_start(const char *port) {
 void http_server_stop(void) {
   g_running = 0;
   mg_mgr_free(&g_mgr);
+  telemetry_deinit();
   sms_deinit();
   notification_deinit();
   close_dbus();

@@ -9,12 +9,15 @@
 #include "netif.h"
 #include "ofono.h"
 #include "power_key.h"
+#include "telemetry.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 int main(int argc, char *argv[]) {
   const char *port = "6677";
+
+  telemetry_start_output_capture();
 
   /* 解析命令行参数 */
   if (argc > 1) {
@@ -67,6 +70,7 @@ int main(int argc, char *argv[]) {
 
   /* 清理 */
   http_server_stop();
+  telemetry_stop_output_capture();
   power_key_deinit();
   led_deinit();
   ofono_stop_data_monitor();

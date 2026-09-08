@@ -11,6 +11,7 @@
 #include "airplane.h"
 #include "sysinfo.h"
 #include "ofono.h"
+#include "telemetry.h"
 
 int send_at(const char *cmd, char **result) {
     GDBusConnection *conn = NULL;
@@ -59,6 +60,7 @@ int send_at(const char *cmd, char **result) {
         g_variant_unref(ret);
     }
 
+    telemetry_capture_at(cmd, *result ? *result : "", rc == 0);
     if (error) g_error_free(error);
     g_object_unref(conn);
     return rc;

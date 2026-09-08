@@ -11,6 +11,7 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include "exec_utils.h"
+#include "telemetry.h"
 
 int run_command_argv(char *output, size_t size, char *const argv[]) {
     if (!output || size == 0 || !argv || !argv[0]) return -1;
@@ -57,7 +58,9 @@ int run_command_argv(char *output, size_t size, char *const argv[]) {
         output[--total] = '\0';
     }
 
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
+    int success = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    telemetry_capture_command(argv[0], output, success);
+    return success ? 0 : -1;
 }
 
 int run_command(char *output, size_t size, const char *cmd, ...) {
