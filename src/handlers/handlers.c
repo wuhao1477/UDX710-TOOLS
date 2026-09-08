@@ -16,6 +16,7 @@
 #include "notification.h"
 #include "ofono.h"
 #include "sysinfo.h"
+#include "telemetry.h"
 #include "wifi.h"
 #include <dirent.h>
 #include <glib.h>
@@ -59,6 +60,115 @@ static int extract_json_string(const char *json, const char *key, char *value,
   memcpy(value, start, length);
   value[length] = '\0';
   return 0;
+}
+
+static void add_telemetry_config_json(JsonBuilder *json,
+                                      const TelemetryConfig *config) {
+  json_obj_open(json);
+  json_add_bool(json, "enabled", config->enabled);
+  json_add_str(json, "url", config->url);
+  json_add_int(json, "interval_sec", config->interval_sec);
+  json_add_bool(json, "token_configured",
+                config->token_present && config->group_token[0] != '\0');
+  json_obj_close(json);
+}
+
+/* GET/POST /api/telemetry/config - 获取或保存上传配置 */
+void handle_telemetry_config(struct mg_connection *c,
+                             struct mg_http_message *hm) {
+  TelemetryConfig config;
+  bool enabled;
+  bool clear_token = false;
+  long interval;
+  char *url = NULL;
+  char *token = NULL;
+
+  HTTP_CHECK_ANY(c, hm);
+  if (http_is_method(hm, "GET")) {
+    if (telemetry_get_config(&config) != 0) {
+      HTTP_ERROR(c, 500, "获取遥测配置失败");
+      return;
+    }
+    JsonBuilder *json = json_new();
+    if (!json) {
+      HTTP_ERROR(c, 500, "生成响应失败");
+      return;
+    }
+    add_telemetry_config_json(json, &config);
+    HTTP_OK_FREE(c, json_finish(json));
+    return;
+  }
+  if (!http_is_method(hm, "POST")) {
+    http_method_error(c);
+    return;
+  }
+
+  if (telemetry_get_config(&config) != 0) {
+    HTTP_ERROR(c, 500, "获取遥测配置失败");
+    return;
+  }
+  enabled = config.enabled != 0;
+  mg_json_get_bool(hm->body, "$.enabled", &enabled);
+  config.enabled = enabled ? 1 : 0;
+  interval = mg_json_get_long(hm->body, "$.interval_sec", config.interval_sec);
+  config.interval_sec = (int)interval;
+  url = mg_json_get_str(hm->body, "$.url");
+  if (url) {
+    snprintf(config.url, sizeof(config.url), "%s", url);
+    free(url);
+  }
+  token = mg_json_get_str(hm->body, "$.token");
+  if (token) {
+    snprintf(config.group_token, sizeof(config.group_token), "%s", token);
+    config.token_present = config.group_token[0] != '\0';
+    free(token);
+  }
+  mg_json_get_bool(hm->body, "$.clear_token", &clear_token);
+  if (telemetry_save_config(&config, clear_token ? 1 : 0) != 0) {
+    HTTP_ERROR(c, 400, "遥测配置无效");
+    return;
+  }
+  HTTP_SUCCESS(c, "遥测配置已保存");
+}
+
+/* GET /api/telemetry/status - 获取上传运行状态 */
+void handle_telemetry_status(struct mg_connection *c,
+                             struct mg_http_message *hm) {
+  TelemetryStatus status;
+  JsonBuilder *json;
+
+  HTTP_CHECK_GET(c, hm);
+  if (telemetry_get_status(&status) != 0) {
+    HTTP_ERROR(c, 500, "获取遥测状态失败");
+    return;
+  }
+  json = json_new();
+  if (!json) {
+    HTTP_ERROR(c, 500, "生成响应失败");
+    return;
+  }
+  json_obj_open(json);
+  json_add_bool(json, "running", status.running);
+  json_add_long(json, "last_success", (long long)status.last_success);
+  json_add_long(json, "last_failure", (long long)status.last_failure);
+  json_add_ulong(json, "sent_count", (unsigned long)status.sent_count);
+  json_add_ulong(json, "failed_count", (unsigned long)status.failed_count);
+  json_add_str(json, "last_error", status.last_error);
+  json_obj_close(json);
+  HTTP_OK_FREE(c, json_finish(json));
+}
+
+/* POST /api/telemetry/test - 测试接收端鉴权 */
+void handle_telemetry_test(struct mg_connection *c,
+                           struct mg_http_message *hm) {
+  TelemetryConfig config;
+
+  HTTP_CHECK_POST(c, hm);
+  if (telemetry_get_config(&config) != 0 || telemetry_test(&config) != 0) {
+    HTTP_ERROR(c, 502, "遥测接收端连接失败");
+    return;
+  }
+  HTTP_SUCCESS(c, "遥测接收端连接成功");
 }
 
 /* GET /api/info - 获取系统信息 */

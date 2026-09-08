@@ -167,7 +167,13 @@ static void http_handler(struct mg_connection *c, int ev, void *ev_data) {
     }
 
     /* API 路由 */
-    if (mg_match(hm->uri, mg_str("/api/info"), NULL)) {
+    if (mg_match(hm->uri, mg_str("/api/telemetry/config"), NULL)) {
+      handle_telemetry_config(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/telemetry/status"), NULL)) {
+      handle_telemetry_status(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/telemetry/test"), NULL)) {
+      handle_telemetry_test(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/info"), NULL)) {
       handle_info(c, hm);
     } else if (mg_match(hm->uri, mg_str("/api/at"), NULL)) {
       handle_execute_at(c, hm);
