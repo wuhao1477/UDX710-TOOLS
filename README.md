@@ -234,10 +234,17 @@ The backend uses cross-compilation targeting aarch64-linux-gnu. Ensure your tool
 | `/api/rathole/services` | GET/POST/DELETE | Rathole service management |
 | `/api/rathole/status` | GET | Rathole connection status |
 | `/api/rathole/logs` | GET | Rathole logs |
+| `/api/telemetry/config` | GET/POST | Log and telemetry upload configuration |
+| `/api/telemetry/status` | GET | Log and telemetry upload status |
+| `/api/telemetry/test` | POST | Test telemetry receiver |
 | `/api/update/check` | GET | Check for updates |
 | `/api/update/install` | POST | Install update |
 | `/api/factory-reset` | POST | Factory reset |
 | `/api/reboot` | POST | Reboot device |
+
+### Log and telemetry upload
+
+Uploading is disabled by default. Configure a complete receiver URL, group Token, and a 10–3600 second snapshot interval in System Settings. The device sends system parameters, runtime status, traffic, and logs; passwords, credentials, Tokens, and SMS bodies are excluded. No offline queue is kept on the device, so failed fragments are discarded.
 
 ## Dependencies
 

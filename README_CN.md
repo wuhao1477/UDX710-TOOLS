@@ -232,10 +232,17 @@ make
 | `/api/rathole/services` | GET/POST/DELETE | Rathole服务管理 |
 | `/api/rathole/status` | GET | Rathole连接状态 |
 | `/api/rathole/logs` | GET | Rathole日志 |
+| `/api/telemetry/config` | GET/POST | 日志与遥测上传配置 |
+| `/api/telemetry/status` | GET | 日志与遥测上传状态 |
+| `/api/telemetry/test` | POST | 测试遥测接收端 |
 | `/api/update/check` | GET | 检查更新 |
 | `/api/update/install` | POST | 安装更新 |
 | `/api/factory-reset` | POST | 恢复出厂设置 |
 | `/api/reboot` | POST | 重启设备 |
+
+### 日志与遥测上传
+
+上传默认关闭。在系统设置中配置完整接收 URL、分组 Token 和 10–3600 秒的快照周期后，设备会上传系统参数、运行状态、流量和日志。密码、认证凭据、Token 及短信正文不会上传。设备不保存断网队列，失败分片直接丢弃。
 
 ## 依赖库
 
