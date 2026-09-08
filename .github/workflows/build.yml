@@ -15,7 +15,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y nodejs xz-utils
+          sudo apt-get install -y nodejs xz-utils zip
           corepack enable
           corepack prepare pnpm@10.6.5 --activate
 
@@ -58,6 +58,16 @@ jobs:
           cp tools/start.sh output/6677/start.sh
           cp tools/rj45_bridge_watch.sh output/6677/rj45_bridge_watch.sh
           chmod 755 output/6677/server output/6677/start.sh output/6677/rj45_bridge_watch.sh
+          mkdir -p output/update-package
+          cp src/build/ofono-server output/update-package/server
+          cp -r web/dist output/update-package/
+          cp tools/start.sh output/update-package/start.sh
+          cp tools/rj45_bridge_watch.sh output/update-package/rj45_bridge_watch.sh
+          cp tools/update_install.sh output/update-package/install.sh
+          chmod 755 output/update-package/server output/update-package/install.sh \
+            output/update-package/start.sh output/update-package/rj45_bridge_watch.sh
+          (cd output/update-package && zip -qr ../udx710-tools-update.zip .)
+          rm -rf output/update-package
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

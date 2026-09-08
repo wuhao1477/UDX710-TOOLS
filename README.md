@@ -246,6 +246,8 @@ The backend uses cross-compilation targeting aarch64-linux-gnu. Ensure your tool
 
 Uploading is disabled by default. Configure a complete receiver URL, group Token, and a 10–3600 second snapshot interval in System Settings. The device sends system parameters, runtime status, traffic, and logs; passwords, credentials, Tokens, and SMS bodies are excluded. No offline queue is kept on the device, so failed fragments are discarded.
 
+The System Update local-file mode uses `udx710-tools-update.zip` from the cloud build artifact. It contains `install.sh`, replaces the server and frontend files, and preserves `6677.db`, plugins, and other data.
+
 ## Dependencies
 
 ### Backend Libraries
