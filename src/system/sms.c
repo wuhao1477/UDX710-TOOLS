@@ -11,6 +11,7 @@
 #include "sms.h"
 #include "database.h"
 #include "notification.h"
+#include "sms_parser.h"
 #include "ofono.h"
 
 /* 短信模块专用互斥锁 */
@@ -39,6 +40,20 @@ static void unsubscribe_sms_signal(void);
 static void on_ofono_appeared(GDBusConnection *conn, const gchar *name, const gchar *name_owner, gpointer user_data);
 static void on_ofono_vanished(GDBusConnection *conn, const gchar *name, gpointer user_data);
 static void apply_sms_fix_on_init(void);
+
+static void copy_variant_string(GVariant *properties, const char *key,
+                                char *output, size_t output_size) {
+    GVariant *value;
+    const gchar *text;
+    if (!output || output_size == 0) return;
+    output[0] = '\0';
+    if (!properties || !key) return;
+    value = g_variant_lookup_value(properties, key, G_VARIANT_TYPE_STRING);
+    if (!value) return;
+    text = g_variant_get_string(value, NULL);
+    if (text) snprintf(output, output_size, "%s", text);
+    g_variant_unref(value);
+}
 
 /* Hex解码函数 - 将hex字符串解码为原始字节 */
 static void hex_decode(const char *hex, char *out, size_t out_size) {
@@ -207,30 +222,51 @@ static void on_incoming_message(GDBusConnection *conn, const gchar *sender_name,
         return;
     }
 
-    const gchar *content = NULL;
+    const gchar *signal_message = NULL;
     GVariant *props = NULL;
-    g_variant_get(parameters, "(&s@a{sv})", &content, &props);
+    g_variant_get(parameters, "(&s@a{sv})", &signal_message, &props);
 
-    if (!content || !props) {
+    if (!signal_message || !props) {
         printf("[SMS] 解析短信内容失败\n");
         if (props) g_variant_unref(props);
         return;
     }
 
     /* 提取发送者 */
-    char sender[64] = "未知";
-    GVariant *sender_var = g_variant_lookup_value(props, "Sender", G_VARIANT_TYPE_STRING);
-    if (sender_var) {
-        const gchar *s = g_variant_get_string(sender_var, NULL);
-        if (s) strncpy(sender, s, sizeof(sender) - 1);
-        g_variant_unref(sender_var);
+    char sender[64] = "";
+    char text_property[1024] = "";
+    char content_property[1024] = "";
+    char message_property[1024] = "";
+    char message[1024] = "";
+    char notification_content[1024] = "";
+    copy_variant_string(props, "Sender", sender, sizeof(sender));
+    if (!sender[0]) copy_variant_string(props, "OriginatingAddress", sender,
+                                         sizeof(sender));
+    if (!sender[0]) copy_variant_string(props, "Address", sender,
+                                         sizeof(sender));
+    if (!sender[0]) snprintf(sender, sizeof(sender), "未知号码");
+    copy_variant_string(props, "Text", text_property, sizeof(text_property));
+    copy_variant_string(props, "Content", content_property,
+                        sizeof(content_property));
+    copy_variant_string(props, "Message", message_property,
+                        sizeof(message_property));
+    int text_available = sms_select_incoming_text(
+        signal_message, text_property, content_property, message_property,
+        message, sizeof(message)) == 0;
+    if (text_available) {
+        snprintf(notification_content, sizeof(notification_content), "%s",
+                 message);
+    } else {
+        snprintf(notification_content, sizeof(notification_content),
+                 "（未读取到短信正文）");
     }
 
-    printf("[SMS] 新短信 - 发件人: %s, 内容: %s\n", sender, content);
+    printf("[SMS] 新短信 - 发件人: %s, 内容: %s\n", sender,
+           text_available ? message : "<empty>");
 
     /* 保存到数据库 */
     time_t now = time(NULL);
-    if (save_sms_to_db(sender, content, now) == 0) {
+    if (save_sms_to_db(sender, text_available ? message : "", now) == 0) {
         printf("[SMS] 短信已保存到数据库\n");
 
         NotificationEvent event = {0};
@@ -238,7 +274,8 @@ static void on_incoming_message(GDBusConnection *conn, const gchar *sender_name,
         snprintf(event.title, sizeof(event.title), "新短信");
         snprintf(event.message, sizeof(event.message), "设备收到新短信");
         snprintf(event.sender, sizeof(event.sender), "%s", sender);
-        snprintf(event.content, sizeof(event.content), "%s", content);
+        snprintf(event.content, sizeof(event.content), "%s",
+                 notification_content);
         event.timestamp = now;
         notification_emit(&event);
     }

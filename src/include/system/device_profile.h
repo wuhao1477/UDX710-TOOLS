@@ -25,6 +25,7 @@ typedef struct {
   int typec_host_capable;
   int usb_mode_switch_supported;
   int usb_rndis_available;
+  int usb_rndis_link_up;
   char wifi_iface[32];
   char wifi_config[256];
   char data_iface[32];
@@ -34,6 +35,7 @@ typedef struct {
   char led_blue[256];
   char usb_vid[16];
   char usb_pid[16];
+  char usb_rndis_iface[32];
   char reason_rj45[160];
   char reason_power[160];
   char reason_usb[160];
@@ -54,6 +56,8 @@ DeviceUsbMode device_profile_classify_usb(const char *vid, const char *pid,
                                           const char *const *functions,
                                           size_t count);
 int device_profile_parse_link_state(const char *carrier, const char *operstate);
+int device_profile_select_rndis_iface(const char *const *names, size_t count,
+                                      char *out, size_t out_size);
 
 #ifdef __cplusplus
 }

@@ -17,6 +17,9 @@
 static DeviceProfile profile;
 static int initialized;
 
+static int read_line(const char *path, char *out, size_t out_size);
+static int interface_link_up(const char *name);
+
 static void copy_text(char *out, size_t out_size, const char *value) {
   if (out_size == 0) {
     return;
@@ -120,6 +123,20 @@ int device_profile_select_data_iface(const char *const *names, size_t count,
   }
   for (size_t i = 0; i < count; i++) {
     if (has_prefix(names[i], "wwan") || has_prefix(names[i], "rmnet")) {
+      copy_text(out, out_size, names[i]);
+      return 0;
+    }
+  }
+  copy_text(out, out_size, "");
+  return -1;
+}
+
+int device_profile_select_rndis_iface(const char *const *names, size_t count,
+                                      char *out, size_t out_size) {
+  if (!names || !out || out_size == 0) return -1;
+  for (size_t i = 0; i < count; i++) {
+    if ((has_prefix(names[i], "usb") || has_prefix(names[i], "rndis")) &&
+        !has_prefix(names[i], "sipa_usb")) {
       copy_text(out, out_size, names[i]);
       return 0;
     }
@@ -296,7 +313,8 @@ static void detect_leds(DeviceProfile *out) {
   }
 }
 
-static void detect_usb(DeviceProfile *out) {
+static void detect_usb(DeviceProfile *out, const char *const *net_names,
+                       size_t net_count) {
   char path[256];
   char functions[32][64];
   char link_targets[32][256];
@@ -341,6 +359,12 @@ static void detect_usb(DeviceProfile *out) {
   out->usb_rndis_available = mode == DEVICE_USB_RNDIS_CURRENT ||
                              mode == DEVICE_USB_SWITCHABLE_GENERIC;
   out->usb_mode_switch_supported = mode == DEVICE_USB_SWITCHABLE_GENERIC;
+  if (out->usb_rndis_available &&
+      device_profile_select_rndis_iface(net_names, net_count,
+                                        out->usb_rndis_iface,
+                                        sizeof(out->usb_rndis_iface)) == 0) {
+    out->usb_rndis_link_up = interface_link_up(out->usb_rndis_iface);
+  }
   if (!out->usb_mode_switch_supported) {
     copy_text(out->reason_usb, sizeof(out->reason_usb),
               "当前 Type-C 组合为厂商 RNDIS/ADB/串口，未启用通用热切换");
@@ -406,7 +430,7 @@ int device_profile_refresh(void) {
   }
 
   detect_leds(&profile);
-  detect_usb(&profile);
+  detect_usb(&profile, name_ptrs, net_count);
   initialized = 1;
   return 0;
 }

@@ -171,7 +171,7 @@ onUnmounted(() => {
       <div class="rounded-2xl bg-white/95 dark:bg-white/5 border border-slate-200/60 dark:border-white/10 p-4">
         <p class="text-slate-500 dark:text-white/50 text-xs">Type-C</p>
         <p class="font-semibold text-slate-900 dark:text-white">
-          {{ capabilities.typec?.rndis ? 'RNDIS 已连接' : '未识别' }}
+          {{ capabilities.typec?.link_up ? 'RNDIS 已连接' : capabilities.typec?.rndis ? 'RNDIS 已启用，未连接' : '未启用' }}
         </p>
       </div>
       <div class="rounded-2xl bg-white/95 dark:bg-white/5 border border-slate-200/60 dark:border-white/10 p-4">

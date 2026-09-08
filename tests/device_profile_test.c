@@ -45,6 +45,15 @@ static void test_link_state_parsing(void) {
   assert(device_profile_parse_link_state("0", "unknown") == 0);
 }
 
+static void test_rndis_interface_selection(void) {
+  const char *names[] = {"sipa_usb0", "usb0", "eth0"};
+  char iface[32];
+
+  assert(device_profile_select_rndis_iface(names, 3, iface, sizeof(iface)) ==
+         0);
+  assert(strcmp(iface, "usb0") == 0);
+}
+
 int main(void) {
   test_hostapd_wlan1();
   test_led_fallback();
@@ -52,5 +61,6 @@ int main(void) {
   test_current_typec_rndis();
   test_unsupported_typec_switch();
   test_link_state_parsing();
+  test_rndis_interface_selection();
   return 0;
 }

@@ -126,7 +126,8 @@ void handle_capabilities(struct mg_connection *c, struct mg_http_message *hm) {
       "\"reason\":\"%s\"},"
       "\"typec\":{\"present\":%s,\"host_capable\":%s,"
       "\"gadget_vid\":\"%s\",\"gadget_pid\":\"%s\","
-      "\"rndis\":%s,\"mode_switch_supported\":%s},"
+      "\"rndis\":%s,\"link_up\":%s,\"interface\":\"%s\","
+      "\"mode_switch_supported\":%s},"
       "\"led\":{\"red\":%s,\"green\":%s,\"blue\":%s}}",
       profile->mains_powered ? "external" : "battery",
       profile->battery_supported ? "true" : "false",
@@ -139,6 +140,7 @@ void handle_capabilities(struct mg_connection *c, struct mg_http_message *hm) {
       profile->typec_present ? "true" : "false",
       profile->typec_host_capable ? "true" : "false", profile->usb_vid,
       profile->usb_pid, profile->usb_rndis_available ? "true" : "false",
+      profile->usb_rndis_link_up ? "true" : "false", profile->usb_rndis_iface,
       profile->usb_mode_switch_supported ? "true" : "false",
       profile->led_red[0] ? "true" : "false",
       profile->led_green[0] ? "true" : "false",
