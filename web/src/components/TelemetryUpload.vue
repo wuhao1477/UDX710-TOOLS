@@ -93,7 +93,10 @@ async function save() {
 async function testConnection() {
   testing.value = true
   try {
-    await testTelemetry()
+    const payload = { url: config.value.url }
+    if (tokenInput.value.trim()) payload.token = tokenInput.value.trim()
+    if (clearToken.value) payload.clear_token = true
+    await testTelemetry(payload)
     success(t('settings.telemetryTestSuccess'))
   } catch (err) {
     error(t('settings.telemetryTestFailed') + ': ' + err.message)

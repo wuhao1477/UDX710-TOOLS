@@ -162,9 +162,32 @@ void handle_telemetry_status(struct mg_connection *c,
 void handle_telemetry_test(struct mg_connection *c,
                            struct mg_http_message *hm) {
   TelemetryConfig config;
+  char *url = NULL;
+  char *token = NULL;
+  bool clear_token = false;
 
   HTTP_CHECK_POST(c, hm);
-  if (telemetry_get_config(&config) != 0 || telemetry_test(&config) != 0) {
+  if (telemetry_get_config(&config) != 0) {
+    HTTP_ERROR(c, 502, "遥测接收端连接失败");
+    return;
+  }
+  url = mg_json_get_str(hm->body, "$.url");
+  if (url) {
+    snprintf(config.url, sizeof(config.url), "%s", url);
+    free(url);
+  }
+  token = mg_json_get_str(hm->body, "$.token");
+  if (token) {
+    snprintf(config.group_token, sizeof(config.group_token), "%s", token);
+    config.token_present = config.group_token[0] != '\0';
+    free(token);
+  }
+  mg_json_get_bool(hm->body, "$.clear_token", &clear_token);
+  if (clear_token) {
+    config.group_token[0] = '\0';
+    config.token_present = 0;
+  }
+  if (telemetry_test(&config) != 0) {
     HTTP_ERROR(c, 502, "遥测接收端连接失败");
     return;
   }
