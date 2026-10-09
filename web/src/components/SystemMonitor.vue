@@ -1,7 +1,7 @@
 <script setup>
 import { inject, computed, ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { clearCache, getCurrentBand } from '../composables/useApi'
+import { clearCache, fetchHealth, getCurrentBand } from '../composables/useApi'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 
@@ -12,6 +12,24 @@ const { confirm } = useConfirm()
 const systemInfo = inject('systemInfo')
 const loading = inject('loading')
 const clearingCache = ref(false)
+const health = ref(null)
+const healthLoading = ref(false)
+const healthError = ref('')
+
+async function fetchHealthSnapshot() {
+  if (healthLoading.value) return
+  healthLoading.value = true
+  healthError.value = ''
+  try {
+    health.value = await fetchHealth()
+  } catch (err) {
+    healthError.value = err.message || 'health request failed'
+  } finally {
+    healthLoading.value = false
+  }
+}
+
+let healthTimer = null
 
 // IMEI/ICCID 显示控制
 const showImei = ref(false)
@@ -53,11 +71,62 @@ onMounted(async () => {
   await nextTick()
   fetchCurrentBand()
   bandTimer = setInterval(fetchCurrentBand, 10000)
+  fetchHealthSnapshot()
+  healthTimer = setInterval(fetchHealthSnapshot, 10000)
 })
 
 onUnmounted(() => {
   if (bandTimer) clearInterval(bandTimer)
+  if (healthTimer) clearInterval(healthTimer)
 })
+
+const thermalSensors = computed(() => health.value?.thermal?.sensors || [])
+const storageMounts = computed(() => health.value?.storage?.mounts || [])
+const healthNetwork = computed(() => health.value?.network?.interfaces || [])
+const eth0Health = computed(() => healthNetwork.value.find(item => item.name === 'eth0'))
+const healthStatusClass = computed(() => {
+  const status = health.value?.summary?.status
+  if (status === 'critical') return 'text-red-600 dark:text-red-400'
+  if (status === 'warning') return 'text-amber-600 dark:text-amber-400'
+  if (status === 'ok') return 'text-emerald-600 dark:text-emerald-400'
+  return 'text-slate-500 dark:text-white/50'
+})
+
+function formatHealthTemp(value) {
+  return typeof value === 'number' ? `${value.toFixed(3)} °C` : 'N/A'
+}
+
+function formatBytes(value) {
+  if (typeof value !== 'number') return 'N/A'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let amount = value
+  let unit = 0
+  while (amount >= 1024 && unit < units.length - 1) {
+    amount /= 1024
+    unit++
+  }
+  return `${amount.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`
+}
+
+function healthStatusLabel(status) {
+  return t(`monitor.healthStatus.${status || 'unknown'}`)
+}
+
+function healthConfidenceLabel(confidence) {
+  return t(`monitor.healthConfidence.${confidence || 'low'}`)
+}
+
+function networkLinkLabel(carrier) {
+  if (carrier === 1) return t('monitor.linkUp')
+  if (carrier === 0) return t('monitor.linkDown')
+  return t('common.na')
+}
+
+function networkLinkClass(carrier) {
+  if (carrier === 1) return 'text-emerald-500'
+  if (carrier === 0) return 'text-red-500'
+  return 'text-slate-400'
+}
 
 // 信号强度等级计算（返回1-4）
 function getSignalLevel(rsrp) {
@@ -304,6 +373,137 @@ async function handleClearCache() {
         </div>
       </div>
     </div>
+
+    <!-- 实时设备健康状态：数据只保留在当前页面内存中 -->
+    <section class="space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center space-x-3">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-400 flex items-center justify-center">
+            <i class="fas fa-heart-pulse text-white"></i>
+          </div>
+          <div>
+            <h3 class="text-slate-900 dark:text-white font-bold">{{ t('monitor.realtimeHealth') }}</h3>
+          </div>
+        </div>
+        <div class="flex items-center gap-3 text-sm">
+          <span :class="healthStatusClass" class="font-semibold">
+            {{ healthStatusLabel(health?.summary?.status) }}
+          </span>
+          <span class="text-slate-500 dark:text-white/40 text-xs">
+            {{ health?.timestamp ? new Date(health.timestamp * 1000).toLocaleTimeString() : 'N/A' }}
+          </span>
+          <button @click="fetchHealthSnapshot" :disabled="healthLoading"
+            class="w-9 h-9 rounded-lg bg-slate-100 dark:bg-white/10 hover:bg-slate-200 dark:hover:bg-white/20 flex items-center justify-center transition-colors"
+            :title="t('monitor.refreshHealth')">
+            <font-awesome-icon icon="sync-alt" :class="{ 'animate-spin': healthLoading }" />
+          </button>
+        </div>
+      </div>
+
+      <div v-if="healthError" class="p-3 rounded-xl border border-red-300/60 dark:border-red-500/30 bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-300 text-sm">
+        {{ t('monitor.healthFetchFailed') }}: {{ healthError }}
+      </div>
+
+      <div v-if="health" class="space-y-4">
+        <!-- 详细温度 -->
+        <div class="rounded-2xl bg-white/95 dark:bg-white/5 border border-slate-200/60 dark:border-white/10 p-4 sm:p-5">
+          <div class="flex items-center justify-between gap-3 mb-4">
+            <div>
+              <h4 class="text-slate-900 dark:text-white font-bold">{{ t('monitor.thermalDetails') }}</h4>
+            </div>
+            <div class="text-right">
+              <p class="text-slate-500 dark:text-white/45 text-xs">{{ t('monitor.maxTemperature') }}</p>
+              <p class="text-orange-600 dark:text-orange-400 font-bold">{{ formatHealthTemp(health.thermal?.max_temperature_celsius) }}</p>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+            <div v-for="sensor in thermalSensors" :key="sensor.zone"
+              class="p-3 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50/80 dark:bg-white/5">
+              <div class="flex items-start justify-between gap-2">
+                <div class="min-w-0">
+                  <p class="text-slate-900 dark:text-white font-semibold truncate">{{ sensor.component }}</p>
+                  <p class="text-slate-500 dark:text-white/45 text-xs font-mono truncate">{{ sensor.zone }} · {{ sensor.raw_type }}</p>
+                </div>
+                <span class="text-xs font-semibold whitespace-nowrap"
+                  :class="sensor.status === 'critical' ? 'text-red-500' : sensor.status === 'warning' ? 'text-amber-500' : sensor.status === 'normal' ? 'text-emerald-500' : 'text-slate-400'">
+                  {{ healthStatusLabel(sensor.status) }}
+                </span>
+              </div>
+              <div class="flex items-end justify-between gap-2 mt-3">
+                <span class="text-2xl font-bold text-orange-600 dark:text-orange-400">{{ formatHealthTemp(sensor.temperature_celsius) }}</span>
+                <span class="text-xs text-slate-500 dark:text-white/45 text-right break-words">{{ sensor.area }}</span>
+              </div>
+              <div class="flex flex-wrap items-center gap-x-2 gap-y-1 mt-2 text-[11px] text-slate-500 dark:text-white/40">
+                <span class="font-mono break-all" :title="sensor.source">{{ sensor.source }}</span>
+                <span>{{ healthConfidenceLabel(sensor.mapping_confidence) }}</span>
+                <span v-if="sensor.derived_value">{{ t('monitor.derivedValue') }}</span>
+                <span v-else>{{ t('monitor.directSensor') }}</span>
+              </div>
+              <div v-if="sensor.trip_points?.length" class="mt-2 pt-2 border-t border-slate-200 dark:border-white/10 text-[11px] text-slate-500 dark:text-white/40">
+                {{ t('monitor.tripPoints') }}:
+                <span v-for="(trip, index) in sensor.trip_points" :key="`${sensor.zone}-${index}`" class="ml-1">
+                  {{ trip.type }} {{ formatHealthTemp(trip.temperature_celsius) }}<span v-if="index < sensor.trip_points.length - 1">,</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+          <!-- 存储 -->
+          <div class="rounded-2xl bg-white/95 dark:bg-white/5 border border-slate-200/60 dark:border-white/10 p-4">
+            <div class="flex items-center gap-3 mb-4">
+              <i class="fas fa-hard-drive text-amber-500"></i>
+              <h4 class="text-slate-900 dark:text-white font-bold">{{ t('monitor.storageDetails') }}</h4>
+            </div>
+            <div class="space-y-3">
+              <div v-for="mount in storageMounts" :key="mount.path">
+                <div class="flex justify-between gap-2 text-xs mb-1">
+                  <span class="font-mono text-slate-700 dark:text-white/70">{{ mount.path }}</span>
+                  <span class="text-slate-500 dark:text-white/45">{{ mount.use_percent.toFixed(1) }}%</span>
+                </div>
+                <div class="h-2 rounded-full bg-slate-200 dark:bg-white/10 overflow-hidden">
+                  <div class="h-full rounded-full transition-all" :class="mount.use_percent >= 90 ? 'bg-red-500' : mount.use_percent >= 75 ? 'bg-amber-500' : 'bg-emerald-500'" :style="{ width: `${Math.min(mount.use_percent, 100)}%` }"></div>
+                </div>
+                <p class="text-[11px] text-slate-500 dark:text-white/40 mt-1">{{ formatBytes(mount.available_bytes) }} {{ t('monitor.available') }}<span v-if="mount.readonly"> · {{ t('monitor.readOnly') }}</span></p>
+              </div>
+            </div>
+          </div>
+
+          <!-- 网络 -->
+          <div class="rounded-2xl bg-white/95 dark:bg-white/5 border border-slate-200/60 dark:border-white/10 p-4">
+            <div class="flex items-center gap-3 mb-4">
+              <i class="fas fa-ethernet text-cyan-500"></i>
+              <h4 class="text-slate-900 dark:text-white font-bold">{{ t('monitor.networkHealth') }}</h4>
+            </div>
+            <div v-if="eth0Health" class="space-y-2 text-sm">
+              <div class="flex justify-between"><span class="text-slate-500 dark:text-white/50">eth0</span><span class="font-semibold" :class="networkLinkClass(eth0Health.carrier)">{{ networkLinkLabel(eth0Health.carrier) }}</span></div>
+              <div class="flex justify-between"><span class="text-slate-500 dark:text-white/50">{{ t('monitor.speed') }}</span><span class="text-slate-900 dark:text-white">{{ eth0Health.speed_mbps ?? 'N/A' }} Mbps / {{ eth0Health.duplex || 'N/A' }}</span></div>
+              <div class="flex justify-between"><span class="text-slate-500 dark:text-white/50">{{ t('monitor.driver') }}</span><span class="font-mono text-slate-900 dark:text-white">{{ eth0Health.driver || 'N/A' }}</span></div>
+              <div class="flex justify-between"><span class="text-slate-500 dark:text-white/50">{{ t('monitor.errors') }}</span><span class="text-slate-900 dark:text-white">{{ eth0Health.statistics?.rx_errors ?? 'N/A' }} / {{ eth0Health.statistics?.tx_errors ?? 'N/A' }}</span></div>
+              <div class="flex justify-between"><span class="text-slate-500 dark:text-white/50">{{ t('monitor.carrierChanges') }}</span><span class="text-slate-900 dark:text-white">{{ eth0Health.carrier_changes ?? 'N/A' }}</span></div>
+            </div>
+            <p v-else class="text-sm text-slate-500 dark:text-white/45">{{ t('monitor.noEth0') }}</p>
+          </div>
+
+          <!-- USB / 无线 -->
+          <div class="rounded-2xl bg-white/95 dark:bg-white/5 border border-slate-200/60 dark:border-white/10 p-4">
+            <div class="flex items-center gap-3 mb-4">
+              <i class="fas fa-microchip text-violet-500"></i>
+              <h4 class="text-slate-900 dark:text-white font-bold">{{ t('monitor.hardwareHealth') }}</h4>
+            </div>
+            <div class="space-y-2 text-sm">
+              <div class="flex justify-between"><span class="text-slate-500 dark:text-white/50">{{ t('monitor.usbHost') }}</span><span class="text-slate-900 dark:text-white">{{ health.usb?.xhci_present ? t('monitor.present') : t('monitor.unavailable') }}</span></div>
+              <div class="flex justify-between"><span class="text-slate-500 dark:text-white/50">{{ t('monitor.typecRole') }}</span><span class="text-slate-900 dark:text-white">{{ health.usb?.typec?.data_role || 'N/A' }} / {{ health.usb?.typec?.power_role || 'N/A' }}</span></div>
+              <div class="flex justify-between"><span class="text-slate-500 dark:text-white/50">{{ t('monitor.vbus') }}</span><span class="text-amber-600 dark:text-amber-400">{{ t('monitor.notMeasured') }}</span></div>
+              <div class="flex justify-between"><span class="text-slate-500 dark:text-white/50">{{ t('monitor.wcnChip') }}</span><span class="text-slate-900 dark:text-white">{{ health.wireless?.wcn?.chip_family || 'N/A' }}</span></div>
+              <div class="flex justify-between"><span class="text-slate-500 dark:text-white/50">{{ t('monitor.bluetooth') }}</span><span class="text-slate-900 dark:text-white">{{ health.wireless?.bluetooth?.runtime_available ? t('monitor.available') : t('monitor.notInitialized') }}</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <!-- 顶部状态卡片 - 带动画，移动端优化 -->
     <div class="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3 md:gap-4">

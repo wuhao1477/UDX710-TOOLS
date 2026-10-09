@@ -209,6 +209,12 @@ void json_add_double(JsonBuilder *j, const char *key, double val) {
     json_appendf(j, "\"%s\":%.2f", key, val);
 }
 
+void json_add_double3(JsonBuilder *j, const char *key, double val) {
+    if (!j || !key) return;
+    json_comma(j);
+    json_appendf(j, "\"%s\":%.3f", key, val);
+}
+
 void json_add_bool(JsonBuilder *j, const char *key, int val) {
     if (!j || !key) return;
     json_comma(j);

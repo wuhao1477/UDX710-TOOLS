@@ -203,6 +203,7 @@ make
 | `/api/traffic/stats` | GET | 流量统计 |
 | `/api/traffic/limit` | POST | 设置流量限制 |
 | `/api/modem/info` | GET | Modem信息 |
+| `/api/health` | GET | 实时温度分区、存储、网络、USB和无线硬件状态，不持久化 |
 | `/api/band/current` | GET | 当前频段信息 |
 | `/api/led/status` | GET/POST | LED控制 |
 | `/api/airplane` | GET/POST | 飞行模式 |

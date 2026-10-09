@@ -125,7 +125,47 @@ export default {
     qqGroup: 'QQ Group',
     cacheCleared: 'Cache cleared successfully',
     cacheClearFailed: 'Failed to clear cache',
-    confirmClearCache: 'Are you sure to clear system cache?'
+    confirmClearCache: 'Are you sure to clear system cache?',
+    realtimeHealth: 'Real-time Device Health',
+    refreshHealth: 'Refresh health status',
+    healthFetchFailed: 'Failed to fetch health status',
+    healthStatus: {
+      ok: 'OK',
+      normal: 'Normal',
+      warning: 'Warning',
+      critical: 'Critical',
+      unknown: 'Unknown'
+    },
+    healthConfidence: {
+      high: 'High mapping confidence',
+      medium: 'Medium mapping confidence',
+      low: 'Low mapping confidence'
+    },
+    thermalDetails: 'Thermal Details',
+    maxTemperature: 'Maximum temperature',
+    derivedValue: 'Derived control value',
+    directSensor: 'Direct sensor value',
+    tripPoints: 'Trip points',
+    storageDetails: 'Storage Status',
+    readOnly: 'Read-only',
+    networkHealth: 'Network Interfaces',
+    linkUp: 'Link up',
+    linkDown: 'Link down',
+    speed: 'Speed',
+    driver: 'Driver',
+    errors: 'RX/TX errors',
+    carrierChanges: 'Carrier changes',
+    noEth0: 'eth0 was not found',
+    hardwareHealth: 'USB / Wireless Hardware',
+    usbHost: 'USB host controller',
+    present: 'Present',
+    unavailable: 'Unavailable',
+    typecRole: 'Type-C role',
+    vbus: 'VBUS voltage',
+    notMeasured: 'Not measured',
+    wcnChip: 'WCN chip',
+    bluetooth: 'Bluetooth',
+    notInitialized: 'Not initialized'
   },
 
   // Network

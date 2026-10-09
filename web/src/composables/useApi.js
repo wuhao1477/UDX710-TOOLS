@@ -89,6 +89,11 @@ export async function fetchSystemInfo() {
   return request('/api/info')
 }
 
+// 获取实时设备健康状态（后端不持久化）
+export async function fetchHealth() {
+  return request('/api/health', { cache: 'no-store' })
+}
+
 // 清除系统缓存
 export async function clearCache() {
   return request('/api/clear_cache', { method: 'POST' })
