@@ -137,6 +137,14 @@ void json_add_ulong(JsonBuilder *j, const char *key, unsigned long val);
 void json_add_double(JsonBuilder *j, const char *key, double val);
 
 /**
+ * 添加保留三位小数的浮点数值
+ * @param j JsonBuilder指针
+ * @param key 键名
+ * @param val 浮点数值
+ */
+void json_add_double3(JsonBuilder *j, const char *key, double val);
+
+/**
  * 添加布尔值
  * @param j JsonBuilder指针
  * @param key 键名

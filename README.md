@@ -205,6 +205,7 @@ The backend uses cross-compilation targeting aarch64-linux-gnu. Ensure your tool
 | `/api/traffic/stats` | GET | Traffic statistics |
 | `/api/traffic/limit` | POST | Set traffic limit |
 | `/api/modem/info` | GET | Modem information |
+| `/api/health` | GET | Real-time thermal zones, storage, network, USB and wireless health; no persistence |
 | `/api/band/current` | GET | Current band info |
 | `/api/led/status` | GET/POST | LED control |
 | `/api/airplane` | GET/POST | Airplane mode |

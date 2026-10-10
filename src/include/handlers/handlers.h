@@ -14,6 +14,7 @@ extern "C" {
 
 /* API 处理器 */
 void handle_info(struct mg_connection *c, struct mg_http_message *hm);
+void handle_health(struct mg_connection *c, struct mg_http_message *hm);
 void handle_execute_at(struct mg_connection *c, struct mg_http_message *hm);
 void handle_set_network(struct mg_connection *c, struct mg_http_message *hm);
 void handle_switch(struct mg_connection *c, struct mg_http_message *hm);

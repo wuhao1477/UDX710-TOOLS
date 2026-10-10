@@ -19,6 +19,12 @@ extern "C" {
     "Content-Type: application/json\r\n" \
     "Access-Control-Allow-Origin: *\r\n"
 
+#define HTTP_NO_STORE_HEADERS \
+    "Content-Type: application/json\r\n" \
+    "Access-Control-Allow-Origin: *\r\n" \
+    "Cache-Control: no-store, no-cache, must-revalidate\r\n" \
+    "Pragma: no-cache\r\n"
+
 #define HTTP_OPTIONS_HEADERS \
     "Access-Control-Allow-Origin: *\r\n" \
     "Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n" \
@@ -100,6 +106,12 @@ static inline void http_method_error(struct mg_connection *c) {
 #define HTTP_OK_FREE(c, json) do { \
     char *_json = (json); \
     mg_http_reply((c), 200, HTTP_CORS_HEADERS, "%s", _json); \
+    free(_json); \
+} while(0)
+
+#define HTTP_OK_NO_STORE_FREE(c, json) do { \
+    char *_json = (json); \
+    mg_http_reply((c), 200, HTTP_NO_STORE_HEADERS, "%s", _json); \
     free(_json); \
 } while(0)
 

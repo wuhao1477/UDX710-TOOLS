@@ -125,7 +125,47 @@
     qqGroup: '官方Q群',
     cacheCleared: '缓存清除成功',
     cacheClearFailed: '清除失败',
-    confirmClearCache: '确定要清除系统缓存吗？'
+    confirmClearCache: '确定要清除系统缓存吗？',
+    realtimeHealth: '实时设备健康',
+    refreshHealth: '刷新健康状态',
+    healthFetchFailed: '获取健康状态失败',
+    healthStatus: {
+      ok: '正常',
+      normal: '正常',
+      warning: '警告',
+      critical: '严重',
+      unknown: '未知'
+    },
+    healthConfidence: {
+      high: '映射可信度高',
+      medium: '映射可信度中',
+      low: '映射可信度低'
+    },
+    thermalDetails: '详细温度',
+    maxTemperature: '最高温度',
+    derivedValue: '派生控温值',
+    directSensor: '直接传感器值',
+    tripPoints: '温度阈值',
+    storageDetails: '存储状态',
+    readOnly: '只读',
+    networkHealth: '网络接口状态',
+    linkUp: '链路已连接',
+    linkDown: '链路断开',
+    speed: '速率',
+    driver: '驱动',
+    errors: '收发错误',
+    carrierChanges: '链路变化',
+    noEth0: '未发现 eth0',
+    hardwareHealth: 'USB / 无线硬件',
+    usbHost: 'USB 主机控制器',
+    present: '已发现',
+    unavailable: '不可用',
+    typecRole: 'Type-C 角色',
+    vbus: 'VBUS 电压',
+    notMeasured: '未测量',
+    wcnChip: 'WCN 芯片',
+    bluetooth: '蓝牙',
+    notInitialized: '未初始化'
   },
 
   // 网络管理模块
@@ -1295,6 +1335,5 @@
     factoryResetFailed: '恢复出厂设置失败'
   }
 }
-
 
 
