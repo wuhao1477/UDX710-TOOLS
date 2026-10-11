@@ -7,7 +7,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define GOFORM_PROXY_RESPONSE_SIZE 32768
+typedef struct {
+  char operation[32];
+  char operator_id[16];
+} GoformProxyAsyncArg;
 
 static int proxy_get(const char *operation, char *response, size_t size) {
   if (strcmp(operation, "getDevInfo") == 0) {
@@ -32,12 +35,48 @@ static int proxy_get_operation_allowed(const char *operation) {
          strcmp(operation, "getDevicePkgInfo") == 0;
 }
 
+static int goform_proxy_worker(void *arg, char *response,
+                               size_t response_size) {
+  GoformProxyAsyncArg *task = (GoformProxyAsyncArg *)arg;
+  int priority;
+
+  if (!task) return -1;
+  if (proxy_get_operation_allowed(task->operation)) {
+    return proxy_get(task->operation, response, response_size);
+  }
+  return builtin_card_switch_operator(task->operator_id, response,
+                                      response_size, &priority);
+}
+
+static void complete_goform_proxy(struct mg_connection *c, int result,
+                                  const char *response, void *arg) {
+  GoformProxyAsyncArg *task = (GoformProxyAsyncArg *)arg;
+
+  if (result == 0) {
+    HTTP_JSON(c, 200, response);
+  } else if (task && strcmp(task->operation, "setPriorityMnc") == 0 &&
+             result == -2) {
+    HTTP_ERROR(c, 409, "当前设备不支持内置卡运营商切换");
+  } else if (task && strcmp(task->operation, "setPriorityMnc") == 0 &&
+             result == -3) {
+    HTTP_ERROR(c, 400, "内置卡不存在、未就绪或运营商参数无效");
+  } else if (task && strcmp(task->operation, "setPriorityMnc") == 0 &&
+             result == -4) {
+    HTTP_ERROR(c, 502, "实名状态查询失败");
+  } else if (task && strcmp(task->operation, "setPriorityMnc") == 0 &&
+             result == -5) {
+    HTTP_ERROR(c, 403, "该内置卡尚未实名，禁止切换");
+  } else if (task && strcmp(task->operation, "setPriorityMnc") == 0) {
+    HTTP_ERROR(c, 502, "设备运营商切换失败");
+  } else {
+    HTTP_ERROR(c, 502, "goform 查询失败");
+  }
+}
+
 void handle_goform_proxy(struct mg_connection *c, struct mg_http_message *hm) {
   char *operation;
   char *operator_id = NULL;
-  char response[GOFORM_PROXY_RESPONSE_SIZE];
-  int priority;
-  int result;
+  GoformProxyAsyncArg *task;
 
   HTTP_CHECK_POST(c, hm);
   operation = mg_json_get_str(hm->body, "$.operation");
@@ -47,13 +86,19 @@ void handle_goform_proxy(struct mg_connection *c, struct mg_http_message *hm) {
   }
 
   if (proxy_get_operation_allowed(operation)) {
-    result = proxy_get(operation, response, sizeof(response));
+    task = (GoformProxyAsyncArg *)calloc(1, sizeof(*task));
+    if (task && strlen(operation) < sizeof(task->operation)) {
+      snprintf(task->operation, sizeof(task->operation), "%s", operation);
+    } else {
+      free(task);
+      task = NULL;
+    }
     free(operation);
-    if (result != 0) {
-      HTTP_ERROR(c, 502, "goform 查询失败");
+    if (!task || goform_async_submit(c, goform_proxy_worker, task, free,
+                                     complete_goform_proxy) != 0) {
+      HTTP_ERROR(c, 503, "goform 服务暂不可用");
       return;
     }
-    HTTP_JSON(c, 200, response);
     return;
   }
 
@@ -71,20 +116,17 @@ void handle_goform_proxy(struct mg_connection *c, struct mg_http_message *hm) {
     HTTP_ERROR(c, 400, "setPriorityMnc 必须提供 operatorId");
     return;
   }
-  result = builtin_card_switch_operator(operator_id, response, sizeof(response),
-                                        &priority);
-  free(operator_id);
-  if (result == -2) {
-    HTTP_ERROR(c, 409, "当前设备不支持内置卡运营商切换");
-  } else if (result == -3) {
-    HTTP_ERROR(c, 400, "内置卡不存在或运营商参数无效");
-  } else if (result == -4) {
-    HTTP_ERROR(c, 502, "实名状态查询失败");
-  } else if (result == -5) {
-    HTTP_ERROR(c, 403, "该内置卡尚未实名，禁止切换");
-  } else if (result != 0) {
-    HTTP_ERROR(c, 502, "设备运营商切换失败");
+  task = (GoformProxyAsyncArg *)calloc(1, sizeof(*task));
+  if (task && strlen(operator_id) < sizeof(task->operator_id)) {
+    snprintf(task->operation, sizeof(task->operation), "setPriorityMnc");
+    snprintf(task->operator_id, sizeof(task->operator_id), "%s", operator_id);
   } else {
-    HTTP_JSON(c, 200, response);
+    free(task);
+    task = NULL;
+  }
+  free(operator_id);
+  if (!task || goform_async_submit(c, goform_proxy_worker, task, free,
+                                   complete_goform_proxy) != 0) {
+    HTTP_ERROR(c, 503, "goform 服务暂不可用");
   }
 }

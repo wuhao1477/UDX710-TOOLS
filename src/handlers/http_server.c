@@ -10,6 +10,7 @@
 #include "builtin_cards.h"
 #include "charge.h"
 #include "dbus_core.h"
+#include "goform_client.h"
 #include "goform_proxy.h"
 #include "handlers.h"
 #include "http_utils.h"
@@ -37,11 +38,25 @@ extern int serve_packed_file(struct mg_connection *c,
 /* 全局变量 */
 static struct mg_mgr g_mgr;
 static volatile int g_running = 0;
+static int g_mgr_initialized = 0;
 
 /* 信号处理 */
 static void signal_handler(int sig) {
   (void)sig;
   g_running = 0;
+}
+
+static void http_server_cleanup(void) {
+  goform_async_shutdown();
+  if (g_mgr_initialized) {
+    mg_mgr_free(&g_mgr);
+    g_mgr_initialized = 0;
+  }
+  phone_case_deinit();
+  rathole_deinit();
+  ipv6_proxy_deinit();
+  sms_deinit();
+  close_dbus();
 }
 
 /**
@@ -120,6 +135,14 @@ static int verify_request_token(struct mg_http_message *hm) {
 
 /* HTTP 事件处理函数 */
 static void http_handler(struct mg_connection *c, int ev, void *ev_data) {
+  if (ev == MG_EV_WAKEUP) {
+    goform_async_handle_wakeup(c, (const struct mg_str *)ev_data);
+    return;
+  }
+  if (ev == MG_EV_CLOSE) {
+    goform_async_cancel(c);
+    return;
+  }
   if (ev == MG_EV_HTTP_MSG) {
     struct mg_http_message *hm = (struct mg_http_message *)ev_data;
     char uri[256] = {0};
@@ -471,6 +494,7 @@ static void http_handler(struct mg_connection *c, int ev, void *ev_data) {
 
 int http_server_start(const char *port) {
   char listen_addr[64];
+  struct mg_connection *listener;
 
   /* 初始化 D-Bus */
   if (init_dbus() != 0) {
@@ -518,16 +542,33 @@ int http_server_start(const char *port) {
 
   /* 初始化 mongoose */
   mg_mgr_init(&g_mgr);
-
-  /* 构建监听地址 - 使用 0.0.0.0 监听所有IPv4地址 */
-  snprintf(listen_addr, sizeof(listen_addr), "http://0.0.0.0:%s", port);
-
-  /* 创建 HTTP 监听器 */
-  if (mg_http_listen(&g_mgr, listen_addr, http_handler, NULL) == NULL) {
-    printf("无法监听端口 %s\n", port);
-    mg_mgr_free(&g_mgr);
+  g_mgr_initialized = 1;
+  if (goform_async_init(&g_mgr) != 0) {
+    printf("无法初始化 goform 后台服务\n");
+    http_server_cleanup();
     return -1;
   }
+
+  /* 管理服务直接监听 IPv4。 */
+  snprintf(listen_addr, sizeof(listen_addr), "http://0.0.0.0:%s", port);
+
+  listener = mg_http_listen(&g_mgr, listen_addr, http_handler, NULL);
+  if (listener == NULL) {
+    printf("无法监听端口 %s\n", port);
+    http_server_cleanup();
+    return -1;
+  }
+
+  /* 管理服务同时直接监听 IPv6。IPV6_V6ONLY 已在 Makefile 中开启，
+   * 因此不会与上面的 IPv4 listener 冲突，也不需要经过 6tunnel。 */
+  snprintf(listen_addr, sizeof(listen_addr), "http://[::]:%s", port);
+  listener = mg_http_listen(&g_mgr, listen_addr, http_handler, NULL);
+  if (listener == NULL) {
+    printf("无法监听 IPv6 端口 %s\n", port);
+    http_server_cleanup();
+    return -1;
+  }
+  ipv6_proxy_allow_port(atoi(port));
 
   printf("Server starting on :%s\n", port);
   g_running = 1;
@@ -541,9 +582,8 @@ int http_server_start(const char *port) {
 
 void http_server_stop(void) {
   g_running = 0;
-  mg_mgr_free(&g_mgr);
-  sms_deinit();
-  close_dbus();
+  /* Release proxy children and the native IPv6 management firewall rule. */
+  http_server_cleanup();
   printf("服务器已停止\n");
 }
 

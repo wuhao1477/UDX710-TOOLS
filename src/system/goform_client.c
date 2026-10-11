@@ -4,8 +4,10 @@
 
 #include "builtin_card_rules.h"
 #include "exec_utils.h"
+#include "strict_json.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,7 +19,7 @@
 
 #ifndef BUILTIN_CARD_REAL_NAME_URL
 #define BUILTIN_CARD_REAL_NAME_URL \
-  "http://fy168w.xinhaicapital.com/fysys/UI/getRealNameICCID.ajax"
+  "https://fy168w.xinhaicapital.com/fysys/UI/getRealNameICCID.ajax"
 #endif
 
 #ifndef BUILTIN_CARD_CURL_BIN
@@ -25,29 +27,6 @@
 #endif
 
 static unsigned long request_once = 1;
-
-static int copy_value(char *out, size_t out_size, const char *start,
-                      const char *end) {
-  size_t length;
-
-  if (!out || out_size == 0 || !start || !end || end < start) {
-    return -1;
-  }
-  length = (size_t)(end - start);
-  if (length >= out_size) {
-    return -1;
-  }
-  memcpy(out, start, length);
-  out[length] = '\0';
-  return 0;
-}
-
-static const char *skip_space(const char *value) {
-  while (value && isspace((unsigned char)*value)) {
-    value++;
-  }
-  return value;
-}
 
 static int is_digits(const char *value) {
   if (!value || !*value) {
@@ -86,7 +65,7 @@ static int curl_get(const char *url, char *response, size_t response_size) {
     return -1;
   }
   return run_command(response, response_size, BUILTIN_CARD_CURL_BIN, "-sS",
-                     "--connect-timeout", "3", "--max-time", "8", "-X",
+                     "--fail", "--connect-timeout", "3", "--max-time", "8", "-X",
                      "GET", "-H", "Host: 127.0.0.1:8443", "-H", once,
                      "-H", timestamp, "-H", "content-type: application/json",
                      url, NULL);
@@ -98,7 +77,8 @@ static int curl_post_real_name(const char *operator_id, const char *device_id,
     return -1;
   }
   return run_command(
-      response, response_size, BUILTIN_CARD_CURL_BIN, "-sS", "--connect-timeout",
+      response, response_size, BUILTIN_CARD_CURL_BIN, "-sS", "--fail",
+      "--connect-timeout",
       "5", "--max-time", "8", "-X", "POST", BUILTIN_CARD_REAL_NAME_URL,
       "--data-urlencode", operator_id, "--data-urlencode", device_id,
       "--data-urlencode", "locationStr=", "--data-urlencode",
@@ -167,54 +147,36 @@ int goform_check_real_name(const char *operator_id, const char *device_id,
                              response_size);
 }
 
-static const char *find_json_value(const char *json, const char *key) {
-  char needle[96];
-  const char *cursor;
-  int written;
+static int json_get_field(const char *json, const char *key,
+                          StrictJsonValue *value) {
+  StrictJsonValue root;
+  StrictJsonValue data;
 
-  if (!json || !key) {
-    return NULL;
+  if (!json || !key || !value || strict_json_parse(json, &root) != 0) {
+    return -1;
   }
-  written = snprintf(needle, sizeof(needle), "\"%s\"", key);
-  if (written < 0 || (size_t)written >= sizeof(needle)) {
-    return NULL;
+  if (strict_json_object_get(root, key, value) == 0) return 0;
+  if (strict_json_object_get(root, "data", &data) != 0 ||
+      data.type != STRICT_JSON_OBJECT ||
+      strict_json_object_get(data, key, value) != 0) {
+    return -1;
   }
-  cursor = strstr(json, needle);
-  if (!cursor) {
-    return NULL;
-  }
-  cursor = strchr(cursor + strlen(needle), ':');
-  return cursor ? skip_space(cursor + 1) : NULL;
+  return 0;
 }
 
 int goform_json_string(const char *json, const char *key, char *out,
                        size_t out_size) {
-  const char *value = find_json_value(json, key);
-  const char *end;
+  StrictJsonValue value;
 
-  if (!value || *value != '"') {
-    return -1;
-  }
-  value++;
-  end = strchr(value, '"');
-  return end ? copy_value(out, out_size, value, end) : -1;
+  return json_get_field(json, key, &value) == 0
+             ? strict_json_copy_string(value, out, out_size)
+             : -1;
 }
 
 int goform_json_int(const char *json, const char *key, int *out) {
-  const char *value = find_json_value(json, key);
-  char *end;
-  long parsed;
+  StrictJsonValue value;
 
-  if (!value || !out) {
-    return -1;
-  }
-  if (*value == '"') {
-    value++;
-  }
-  parsed = strtol(value, &end, 10);
-  if (end == value) {
-    return -1;
-  }
-  *out = (int)parsed;
-  return 0;
+  return out && json_get_field(json, key, &value) == 0
+             ? strict_json_get_int_or_string(value, INT_MIN, INT_MAX, out)
+             : -1;
 }

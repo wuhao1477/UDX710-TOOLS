@@ -12,7 +12,7 @@
 #include <string.h>
 
 #define ICCID_CONFIG "/mnt/data/fy/config/iccidcfg"
-#define GOFORM_RESPONSE_SIZE 32768
+#define GOFORM_RESPONSE_SIZE GOFORM_ASYNC_RESPONSE_SIZE
 #define MAX_BUILTIN_CARDS 8
 
 typedef struct {
@@ -229,14 +229,22 @@ static int get_operator_from_body(struct mg_http_message *hm, char *operator_id,
 }
 
 static int find_requested_card(const char *operator_id, BuiltinCard *cards,
-                               size_t count) {
+                               size_t count, int require_ready) {
   for (size_t i = 0; i < count; i++) {
     if (strcmp(cards[i].operator_id, operator_id) == 0 &&
-        cards[i].iccid[0] != '\0') {
+        cards[i].iccid[0] != '\0' &&
+        (!require_ready ||
+         builtin_card_card_is_switchable(cards[i].iccid,
+                                          cards[i].real_state))) {
       return (int)i;
     }
   }
   return -1;
+}
+
+static int find_requested_card_any(const char *operator_id,
+                                   BuiltinCard *cards, size_t count) {
+  return find_requested_card(operator_id, cards, count, 0);
 }
 
 static int check_real_name(const DeviceIdentity *identity,
@@ -285,7 +293,7 @@ int builtin_card_switch_operator(const char *operator_id, char *response,
     return -2;
   }
   if (read_cards(cards, MAX_BUILTIN_CARDS, &count) != 0 ||
-      find_requested_card(operator_id, cards, count) < 0) {
+      find_requested_card(operator_id, cards, count, 1) < 0) {
     return -3;
   }
   priority = builtin_card_priority_for_operator(operator_id);
@@ -306,104 +314,151 @@ int builtin_card_switch_operator(const char *operator_id, char *response,
   return 0;
 }
 
-void handle_builtin_cards(struct mg_connection *c, struct mg_http_message *hm) {
-  BuiltinCard cards[MAX_BUILTIN_CARDS];
-  DeviceIdentity identity;
-  size_t count = 0;
-  JsonBuilder *json;
+typedef struct {
+  char operator_id[16];
+} BuiltinCardAsyncArg;
 
-  HTTP_CHECK_GET(c, hm);
-  if (!ensure_supported(&identity)) {
-    respond_unsupported(c);
-    return;
+static int copy_async_response(char *response, size_t response_size,
+                               char *owned_response) {
+  size_t length;
+
+  if (!response || response_size == 0 || !owned_response) {
+    free(owned_response);
+    return -1;
   }
-  if (read_cards(cards, MAX_BUILTIN_CARDS, &count) != 0) {
-    HTTP_ERROR(c, 503, "无法读取内置卡配置");
-    return;
+  length = strlen(owned_response);
+  if (length >= response_size) {
+    free(owned_response);
+    return -1;
   }
+  memcpy(response, owned_response, length + 1);
+  free(owned_response);
+  return 0;
+}
+
+static int build_cards_response(const DeviceIdentity *identity,
+                                BuiltinCard *cards, size_t count,
+                                char *response, size_t response_size) {
+  JsonBuilder *json;
+  char *owned_response;
+
+  if (!identity || !cards || !response || response_size == 0) return -1;
   json = json_new();
-  if (!json) {
-    HTTP_ERROR(c, 500, "响应内存分配失败");
-    return;
-  }
+  if (!json) return -1;
   json_obj_open(json);
   json_add_int(json, "Code", 0);
   json_add_str(json, "Error", "");
   json_key_obj_open(json, "Data");
   json_add_bool(json, "supported", 1);
-  json_add_int(json, "currentPriority", identity.current_priority);
+  json_add_int(json, "currentPriority", identity->current_priority);
   json_arr_open(json, "cards");
-  for (size_t i = 0; i < count; i++) {
-    add_card_json(json, &cards[i]);
-  }
+  for (size_t i = 0; i < count; i++) add_card_json(json, &cards[i]);
   json_arr_close(json);
   json_obj_close(json);
   json_obj_close(json);
-  HTTP_OK_FREE(c, json_finish(json));
+  owned_response = json_finish(json);
+  return copy_async_response(response, response_size, owned_response);
 }
 
-void handle_builtin_card_real_name(struct mg_connection *c,
-                                   struct mg_http_message *hm) {
+static int builtin_cards_list_worker(void *arg, char *response,
+                                     size_t response_size) {
   BuiltinCard cards[MAX_BUILTIN_CARDS];
   DeviceIdentity identity;
-  char operator_id[16];
+  size_t count = 0;
+
+  (void) arg;
+  if (!ensure_supported(&identity)) return -2;
+  if (read_cards(cards, MAX_BUILTIN_CARDS, &count) != 0) return -3;
+  return build_cards_response(&identity, cards, count, response, response_size);
+}
+
+static void complete_builtin_cards_list(struct mg_connection *c, int result,
+                                        const char *response, void *arg) {
+  (void) arg;
+  if (result == -2) {
+    respond_unsupported(c);
+  } else if (result == -3) {
+    HTTP_ERROR(c, 503, "无法读取内置卡配置");
+  } else if (result != 0) {
+    HTTP_ERROR(c, 500, "响应内存分配失败");
+  } else {
+    HTTP_JSON(c, 200, response);
+  }
+}
+
+static int builtin_card_real_name_worker(void *arg, char *response,
+                                         size_t response_size) {
+  BuiltinCardAsyncArg *task = (BuiltinCardAsyncArg *) arg;
+  BuiltinCard cards[MAX_BUILTIN_CARDS];
+  DeviceIdentity identity;
   size_t count = 0;
   int status;
   JsonBuilder *json;
+  char *owned_response;
 
-  HTTP_CHECK_POST(c, hm);
-  if (!ensure_supported(&identity)) {
-    respond_unsupported(c);
-    return;
+  if (!task || !ensure_supported(&identity)) {
+    return -2;
   }
-  if (get_operator_from_body(hm, operator_id, sizeof(operator_id)) != 0 ||
-      read_cards(cards, MAX_BUILTIN_CARDS, &count) != 0 ||
-      find_requested_card(operator_id, cards, count) < 0) {
-    HTTP_ERROR(c, 400, "内置卡不存在或运营商参数无效");
-    return;
+  if (read_cards(cards, MAX_BUILTIN_CARDS, &count) != 0 ||
+      builtin_card_priority_for_operator(task->operator_id) < 0 ||
+      find_requested_card_any(task->operator_id, cards, count) < 0) {
+    return -3;
   }
-  if (check_real_name(&identity, operator_id, &status) != 0) {
-    HTTP_ERROR(c, 502, "实名状态查询失败");
-    return;
-  }
+  if (check_real_name(&identity, task->operator_id, &status) != 0) return -4;
   json = json_new();
-  if (!json) {
-    HTTP_ERROR(c, 500, "响应内存分配失败");
-    return;
-  }
+  if (!json) return -1;
   json_obj_open(json);
   json_add_int(json, "Code", status == 2 ? 0 : 1);
   json_add_str(json, "Error", status == 2 ? "" : "该内置卡尚未实名");
   json_key_obj_open(json, "Data");
-  json_add_str(json, "operatorId", operator_id);
+  json_add_str(json, "operatorId", task->operator_id);
   json_add_int(json, "realNameStatus", status);
   json_add_bool(json, "verified", status == 2);
   json_obj_close(json);
   json_obj_close(json);
-  HTTP_OK_FREE(c, json_finish(json));
+  owned_response = json_finish(json);
+  return copy_async_response(response, response_size, owned_response);
 }
 
-void handle_builtin_card_switch(struct mg_connection *c,
-                                struct mg_http_message *hm) {
-  char operator_id[16];
-  char response[GOFORM_RESPONSE_SIZE];
+static void complete_builtin_card_real_name(struct mg_connection *c,
+                                            int result, const char *response,
+                                            void *arg) {
+  (void) arg;
+  if (result == -2) {
+    respond_unsupported(c);
+  } else if (result == -3) {
+    HTTP_ERROR(c, 400, "内置卡不存在或运营商参数无效");
+  } else if (result == -4) {
+    HTTP_ERROR(c, 502, "实名状态查询失败");
+  } else if (result != 0) {
+    HTTP_ERROR(c, 500, "响应内存分配失败");
+  } else {
+    HTTP_JSON(c, 200, response);
+  }
+}
+
+static int builtin_card_switch_worker(void *arg, char *response,
+                                      size_t response_size) {
+  BuiltinCardAsyncArg *task = (BuiltinCardAsyncArg *) arg;
   int priority;
-  int result;
+
+  return task ? builtin_card_switch_operator(task->operator_id, response,
+                                             response_size, &priority)
+              : -3;
+}
+
+static void complete_builtin_card_switch(struct mg_connection *c, int result,
+                                         const char *response, void *arg) {
+  BuiltinCardAsyncArg *task = (BuiltinCardAsyncArg *) arg;
+  int priority;
   JsonBuilder *json;
 
-  HTTP_CHECK_POST(c, hm);
-  if (get_operator_from_body(hm, operator_id, sizeof(operator_id)) != 0) {
-    HTTP_ERROR(c, 400, "运营商参数无效");
-    return;
-  }
-  result = builtin_card_switch_operator(operator_id, response, sizeof(response),
-                                        &priority);
   if (result == -2) {
     respond_unsupported(c);
     return;
   }
   if (result == -3) {
-    HTTP_ERROR(c, 400, "内置卡不存在或运营商参数无效");
+    HTTP_ERROR(c, 400, "内置卡不存在、未就绪或运营商参数无效");
     return;
   }
   if (result == -4) {
@@ -414,11 +469,11 @@ void handle_builtin_card_switch(struct mg_connection *c,
     HTTP_ERROR(c, 403, "该内置卡尚未实名，禁止切换");
     return;
   }
-  if (result != 0) {
+  if (result != 0 || !task ||
+      (priority = builtin_card_priority_for_operator(task->operator_id)) < 0) {
     HTTP_ERROR(c, 502, "设备运营商切换失败");
     return;
   }
-
   json = json_new();
   if (!json) {
     HTTP_ERROR(c, 500, "响应内存分配失败");
@@ -428,13 +483,66 @@ void handle_builtin_card_switch(struct mg_connection *c,
   json_add_int(json, "Code", 0);
   json_add_str(json, "Error", "");
   json_key_obj_open(json, "Data");
-  json_add_str(json, "operatorId", operator_id);
+  json_add_str(json, "operatorId", task->operator_id);
   json_add_str(json, "operatorName",
-               builtin_card_operator_name(operator_id));
+               builtin_card_operator_name(task->operator_id));
   json_add_int(json, "priorityMnc", priority);
   json_add_int(json, "result", 0);
   json_add_str(json, "status", "requested");
   json_obj_close(json);
   json_obj_close(json);
   HTTP_OK_FREE(c, json_finish(json));
+  (void) response;
+}
+
+void handle_builtin_cards(struct mg_connection *c, struct mg_http_message *hm) {
+  HTTP_CHECK_GET(c, hm);
+  if (goform_async_submit(c, builtin_cards_list_worker, NULL, NULL,
+                          complete_builtin_cards_list) != 0) {
+    HTTP_ERROR(c, 503, "内置卡服务暂不可用");
+  }
+}
+
+void handle_builtin_card_real_name(struct mg_connection *c,
+                                   struct mg_http_message *hm) {
+  char operator_id[16];
+  BuiltinCardAsyncArg *task;
+
+  HTTP_CHECK_POST(c, hm);
+  if (get_operator_from_body(hm, operator_id, sizeof(operator_id)) != 0) {
+    HTTP_ERROR(c, 400, "内置卡不存在或运营商参数无效");
+    return;
+  }
+  task = (BuiltinCardAsyncArg *)calloc(1, sizeof(*task));
+  if (!task) {
+    HTTP_ERROR(c, 500, "响应内存分配失败");
+    return;
+  }
+  snprintf(task->operator_id, sizeof(task->operator_id), "%s", operator_id);
+  if (goform_async_submit(c, builtin_card_real_name_worker, task, free,
+                          complete_builtin_card_real_name) != 0) {
+    HTTP_ERROR(c, 503, "实名服务暂不可用");
+  }
+}
+
+void handle_builtin_card_switch(struct mg_connection *c,
+                                struct mg_http_message *hm) {
+  char operator_id[16];
+  BuiltinCardAsyncArg *task;
+
+  HTTP_CHECK_POST(c, hm);
+  if (get_operator_from_body(hm, operator_id, sizeof(operator_id)) != 0) {
+    HTTP_ERROR(c, 400, "运营商参数无效");
+    return;
+  }
+  task = (BuiltinCardAsyncArg *)calloc(1, sizeof(*task));
+  if (!task) {
+    HTTP_ERROR(c, 500, "响应内存分配失败");
+    return;
+  }
+  snprintf(task->operator_id, sizeof(task->operator_id), "%s", operator_id);
+  if (goform_async_submit(c, builtin_card_switch_worker, task, free,
+                          complete_builtin_card_switch) != 0) {
+    HTTP_ERROR(c, 503, "内置卡服务暂不可用");
+  }
 }

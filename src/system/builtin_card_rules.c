@@ -1,8 +1,8 @@
 #include "builtin_card_rules.h"
 
-#include <ctype.h>
+#include "strict_json.h"
+
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 typedef struct {
@@ -51,35 +51,37 @@ int builtin_card_profile_supported(const char *oemname, const char *devtype,
   return strcmp(devtype, "541") == 0 || strcmp(devtype, "542") == 0;
 }
 
+int builtin_card_card_is_switchable(const char *iccid, int real_state) {
+  return iccid && iccid[0] != '\0' && real_state == 2;
+}
+
 int builtin_card_parse_real_name_status(const char *json, int *status) {
-  const char *key;
-  const char *cursor;
-  char *end;
-  long value;
+  StrictJsonValue root;
+  StrictJsonValue code_value;
+  StrictJsonValue success_value;
+  StrictJsonValue data_value;
+  StrictJsonValue status_value;
+  int code;
+  int success;
 
   if (!json || !status) {
     return -1;
   }
-  key = strstr(json, "\"realNameStatus\"");
-  if (!key) {
+  /* The service contract is: {code: 0, success: true, data: { ... }}.
+   * Do not accept a status copied from an unrelated nested object or a
+   * response with an empty/string data field. */
+  if (strict_json_parse(json, &root) != 0 ||
+      strict_json_object_get(root, "code", &code_value) != 0 ||
+      strict_json_get_int(code_value, 0, 0, &code) != 0 || code != 0 ||
+      strict_json_object_get(root, "success", &success_value) != 0 ||
+      strict_json_get_bool(success_value, &success) != 0 || !success ||
+      strict_json_object_get(root, "data", &data_value) != 0 ||
+      data_value.type != STRICT_JSON_OBJECT ||
+      strict_json_object_get(data_value, "realNameStatus", &status_value) !=
+          0 ||
+      strict_json_get_int(status_value, 0, 2, status) != 0) {
     return -1;
   }
-  cursor = strchr(key + strlen("\"realNameStatus\""), ':');
-  if (!cursor) {
-    return -1;
-  }
-  cursor++;
-  while (isspace((unsigned char)*cursor)) {
-    cursor++;
-  }
-  if (*cursor == '\"') {
-    cursor++;
-  }
-  value = strtol(cursor, &end, 10);
-  if (end == cursor) {
-    return -1;
-  }
-  *status = (int)value;
   return 0;
 }
 

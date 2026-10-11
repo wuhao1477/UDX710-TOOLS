@@ -11,6 +11,7 @@ int builtin_card_priority_for_operator(const char *operator_id);
 const char *builtin_card_operator_name(const char *operator_id);
 int builtin_card_profile_supported(const char *oemname, const char *devtype,
                                    const char *devsubtype);
+int builtin_card_card_is_switchable(const char *iccid, int real_state);
 int builtin_card_parse_real_name_status(const char *json, int *status);
 int builtin_card_build_priority_query(int priority, char *out, size_t out_size);
 

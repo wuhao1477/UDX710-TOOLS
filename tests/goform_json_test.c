@@ -32,6 +32,12 @@ static void test_json_parser_rejects_missing_values(void) {
   assert(goform_json_string("{\"oemname\":null}", "oemname", value,
                            sizeof(value)) != 0);
   assert(goform_json_int("{\"usemnc\":null}", "usemnc", &number) != 0);
+  assert(goform_json_int("{\"usemnc\":1.5}", "usemnc", &number) != 0);
+  assert(goform_json_string("{\"data\":{\"name\":\"ok\"}}", "name",
+                            value, sizeof(value)) == 0);
+  assert(strcmp(value, "ok") == 0);
+  assert(goform_json_string("{\"data\":{\"name\":\"unterminated}}",
+                            "name", value, sizeof(value)) != 0);
 }
 
 int main(void) {
