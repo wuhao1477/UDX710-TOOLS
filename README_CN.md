@@ -64,6 +64,7 @@
 
 ### 网络管理
 - **Modem控制**：查看IMEI、ICCID、运营商信息、信号强度
+- **内置卡运营商切换**：查询实名状态，并通过设备本地 goform 服务切换已确认的 SZ50 内置卡运营商
 - **频段信息**：实时显示网络类型、频段、ARFCN、PCI、RSRP、RSRQ、SINR
 - **小区管理**：查看和管理蜂窝网络连接
 - **流量统计**：通过vnstat集成监控数据使用量
@@ -203,6 +204,10 @@ make
 | `/api/traffic/stats` | GET | 流量统计 |
 | `/api/traffic/limit` | POST | 设置流量限制 |
 | `/api/modem/info` | GET | Modem信息 |
+| `/api/builtin-cards` | GET | 内置卡列表和当前运营商 |
+| `/api/builtin-cards/realname` | POST | 查询内置卡实名状态 |
+| `/api/builtin-cards/switch` | POST | 实名校验并切换内置卡运营商 |
+| `/api/goform/proxy` | POST | 受限访问设备本地 goform 服务 |
 | `/api/health` | GET | 实时温度分区、存储、网络、USB和无线硬件状态，不持久化 |
 | `/api/band/current` | GET | 当前频段信息 |
 | `/api/led/status` | GET/POST | LED控制 |

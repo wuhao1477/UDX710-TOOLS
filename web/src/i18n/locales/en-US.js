@@ -200,6 +200,34 @@ export default {
     switchFailed: 'Switch failed'
   },
 
+  // Built-in card operator management
+  builtinCard: {
+    title: 'Carrier and Built-in Cards',
+    description: 'Verify real name before switching the carrier through the device-local service.',
+    current: 'Current: {carrier}',
+    unknownCarrier: 'Unknown carrier',
+    refresh: 'Refresh',
+    loading: 'Reading built-in cards...',
+    unsupported: 'This device is not a confirmed SZ50 profile; carrier switching is disabled.',
+    empty: 'No available built-in cards.',
+    ready: 'Ready',
+    unavailable: 'Unavailable',
+    iccid: 'ICCID',
+    realName: 'Real-name status',
+    verifiedShort: 'Verified',
+    notVerifiedShort: 'Not verified',
+    checkRealName: 'Verify real name',
+    switch: 'Switch to this card',
+    verified: 'Real-name status: verified',
+    notVerified: 'This built-in card is not verified',
+    realNameFailed: 'Real-name status query failed',
+    loadFailed: 'Failed to read built-in cards',
+    confirmTitle: 'Confirm carrier switch',
+    confirmMessage: 'Switch to {carrier}. The device will briefly disconnect and register again.',
+    switched: 'Switch to {carrier} requested',
+    switchFailed: 'Carrier switch failed'
+  },
+
   // APN
   apn: {
     title: 'APN Configuration',
@@ -1320,4 +1348,3 @@ export default {
     factoryResetFailed: 'Factory reset failed'
   }
 }
-

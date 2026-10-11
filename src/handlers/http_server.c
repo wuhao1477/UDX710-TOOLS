@@ -7,8 +7,10 @@
 #include "advanced.h"
 #include "apn.h"
 #include "auth.h"
+#include "builtin_cards.h"
 #include "charge.h"
 #include "dbus_core.h"
+#include "goform_proxy.h"
 #include "handlers.h"
 #include "http_utils.h"
 #include "mongoose.h"
@@ -175,6 +177,15 @@ static void http_handler(struct mg_connection *c, int ev, void *ev_data) {
       handle_clear_cache(c, hm);
     } else if (mg_match(hm->uri, mg_str("/api/current_band"), NULL)) {
       handle_get_current_band(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/goform/proxy"), NULL)) {
+      handle_goform_proxy(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/builtin-cards/realname"),
+                        NULL)) {
+      handle_builtin_card_real_name(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/builtin-cards/switch"), NULL)) {
+      handle_builtin_card_switch(c, hm);
+    } else if (mg_match(hm->uri, mg_str("/api/builtin-cards"), NULL)) {
+      handle_builtin_cards(c, hm);
     }
     /* 高级网络 API */
     else if (mg_match(hm->uri, mg_str("/api/bands"), NULL)) {

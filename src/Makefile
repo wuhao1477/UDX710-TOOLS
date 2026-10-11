@@ -27,7 +27,9 @@ SYSTEM_SRCS = system/sysinfo.c system/health.c system/modem.c system/airplane.c 
               system/traffic.c system/reboot.c system/charge.c system/sms.c system/update.c \
               system/usb_mode.c system/plugin.c system/plugin_storage.c \
               system/sha256.c system/auth.c system/database.c system/apn.c system/json_builder.c \
-              system/netif.c system/rathole.c system/phone_case.c system/ipv6_proxy.c system/security.c
+              system/netif.c system/rathole.c system/phone_case.c system/ipv6_proxy.c system/security.c \
+              system/builtin_card_rules.c system/goform_client.c system/builtin_cards.c \
+              system/goform_proxy.c
 SRCS = $(MAIN_SRCS) $(HANDLER_SRCS) $(SYSTEM_SRCS)
 OBJS = $(BUILD_DIR)/main.o $(BUILD_DIR)/mongoose.o $(BUILD_DIR)/packed_fs.o \
        $(BUILD_DIR)/http_server.o $(BUILD_DIR)/handlers.o \
@@ -38,7 +40,9 @@ OBJS = $(BUILD_DIR)/main.o $(BUILD_DIR)/mongoose.o $(BUILD_DIR)/packed_fs.o \
        $(BUILD_DIR)/plugin.o $(BUILD_DIR)/plugin_storage.o \
        $(BUILD_DIR)/sha256.o $(BUILD_DIR)/auth.o $(BUILD_DIR)/database.o $(BUILD_DIR)/apn.o \
        $(BUILD_DIR)/json_builder.o $(BUILD_DIR)/netif.o $(BUILD_DIR)/rathole.o $(BUILD_DIR)/phone_case.o \
-       $(BUILD_DIR)/ipv6_proxy.o $(BUILD_DIR)/security.o
+       $(BUILD_DIR)/ipv6_proxy.o $(BUILD_DIR)/security.o \
+       $(BUILD_DIR)/builtin_card_rules.o $(BUILD_DIR)/goform_client.o $(BUILD_DIR)/builtin_cards.o \
+       $(BUILD_DIR)/goform_proxy.o
 
 .PHONY: all clean
 
@@ -140,6 +144,18 @@ $(BUILD_DIR)/ipv6_proxy.o: system/ipv6_proxy.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
 
 $(BUILD_DIR)/security.o: system/security.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
+
+$(BUILD_DIR)/builtin_card_rules.o: system/builtin_card_rules.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
+
+$(BUILD_DIR)/goform_client.o: system/goform_client.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
+
+$(BUILD_DIR)/builtin_cards.o: system/builtin_cards.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
+
+$(BUILD_DIR)/goform_proxy.o: system/goform_proxy.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
 
 $(BUILD_DIR):

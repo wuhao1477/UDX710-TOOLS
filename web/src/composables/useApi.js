@@ -76,10 +76,13 @@ async function request(url, options = {}) {
     throw new Error('未授权，请重新登录')
   }
 
+  const payload = await response.json().catch(() => ({}))
   if (!response.ok) {
-    throw new Error(`HTTP错误: ${response.status}`)
+    const error = new Error(payload.error || payload.Error || `HTTP错误: ${response.status}`)
+    error.status = response.status
+    throw error
   }
-  return response.json()
+  return payload
 }
 
 // ==================== 系统信息API ====================
@@ -87,6 +90,34 @@ async function request(url, options = {}) {
 // 获取系统信息
 export async function fetchSystemInfo() {
   return request('/api/info')
+}
+
+// ==================== 内置卡运营商 API ====================
+
+export async function getBuiltinCards() {
+  return request('/api/builtin-cards')
+}
+
+export async function checkBuiltinCardRealName(operatorId) {
+  return request('/api/builtin-cards/realname', {
+    method: 'POST',
+    body: JSON.stringify({ operatorId })
+  })
+}
+
+export async function switchBuiltinCard(operatorId) {
+  return request('/api/builtin-cards/switch', {
+    method: 'POST',
+    body: JSON.stringify({ operatorId })
+  })
+}
+
+// 后端限制 operation 和 operatorId；运营商切换仍会再次执行实名校验。
+export async function goformProxy(operation, payload = {}) {
+  return request('/api/goform/proxy', {
+    method: 'POST',
+    body: JSON.stringify({ operation, ...payload })
+  })
 }
 
 // 获取实时设备健康状态（后端不持久化）
