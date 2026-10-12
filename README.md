@@ -66,6 +66,7 @@ Lightweight, efficient, and perfect for resource-constrained embedded devices!
 
 ### Network Management
 - **Modem Control**: View IMEI, ICCID, carrier info, signal strength
+- **Built-in Card Carrier Switching**: Check real-name status and switch confirmed SZ50 built-in cards through the device-local goform service
 - **Band Information**: Real-time display of network type, band, ARFCN, PCI, RSRP, RSRQ, SINR
 - **Cell Management**: View and manage cellular connections
 - **Traffic Statistics**: Monitor data usage with vnstat integration
@@ -205,6 +206,10 @@ The backend uses cross-compilation targeting aarch64-linux-gnu. Ensure your tool
 | `/api/traffic/stats` | GET | Traffic statistics |
 | `/api/traffic/limit` | POST | Set traffic limit |
 | `/api/modem/info` | GET | Modem information |
+| `/api/builtin-cards` | GET | Built-in cards and current carrier |
+| `/api/builtin-cards/realname` | POST | Check built-in card real-name status |
+| `/api/builtin-cards/switch` | POST | Verify and switch the built-in card carrier |
+| `/api/goform/proxy` | POST | Restricted proxy to the device-local goform service |
 | `/api/health` | GET | Real-time thermal zones, storage, network, USB and wireless health; no persistence |
 | `/api/band/current` | GET | Current band info |
 | `/api/led/status` | GET/POST | LED control |

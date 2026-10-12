@@ -162,6 +162,13 @@ int ipv6_proxy_restart(void);
  */
 int ipv6_proxy_get_status(IPv6ProxyStatus *status);
 
+/**
+ * Allow a native IPv6 listener through the device firewall.
+ * The management service owns port 6677 directly and does not use a proxy
+ * child, but it still needs the same firewall handling as proxy rules.
+ */
+void ipv6_proxy_allow_port(int port);
+
 /*============================================================================
  * IPv6地址
  *============================================================================*/
@@ -208,4 +215,3 @@ int ipv6_proxy_get_send_logs(char *json_output, size_t size, int max_count);
 #endif
 
 #endif /* IPV6_PROXY_H */
-

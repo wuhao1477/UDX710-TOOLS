@@ -34,6 +34,20 @@ jobs:
           cd src
           make
 
+      - name: run tests
+        run: |
+          make -C tests test
+          sh tests/check_routes.sh
+          node tests/frontend_api_test.mjs
+
+      - name: verify device glibc ABI
+        run: |
+          if readelf --version-info src/build/ofono-server | grep -q 'GLIBC_2\.34'; then
+            echo "server requires GLIBC_2.34, which is unavailable on the device" >&2
+            exit 1
+          fi
+          test "$(readelf --version-info src/build/ofono-server | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -n 1)" = "GLIBC_2.17"
+
       - name: dopack
         run: |
           mkdir -p output/6677

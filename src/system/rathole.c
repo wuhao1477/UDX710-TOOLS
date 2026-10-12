@@ -13,12 +13,18 @@
 #include "rathole.h"
 #include "database.h"
 #include "exec_utils.h"
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -37,6 +43,110 @@ static RatholeConfig g_current_config = {0};
 static int create_rathole_tables(void);
 static int load_rathole_config(void);
 static int parse_service_row(const char *row, RatholeService *svc);
+static int rathole_process_matches(pid_t pid);
+static int find_rathole_processes(pid_t *pids, size_t max_count);
+static int rathole_process_alive(pid_t pid);
+static int wait_for_rathole_exit(pid_t pid, int timeout_ms);
+
+/*
+ * Do not use "pkill -f" here.  The command line of the shell executing
+ * pkill contains RATHOLE_BIN_PATH itself, so BusyBox can kill that shell
+ * before it launches the client and leave the HTTP request hanging.
+ */
+static int rathole_process_matches(pid_t pid) {
+  char proc_path[64];
+  char exe_path[256];
+  char cmdline[256];
+  ssize_t length;
+  int fd;
+
+  if (pid <= 1 || pid == getpid()) {
+    return 0;
+  }
+
+  snprintf(proc_path, sizeof(proc_path), "/proc/%ld/exe", (long)pid);
+  length = readlink(proc_path, exe_path, sizeof(exe_path) - 1);
+  if (length <= 0) {
+    return 0;
+  }
+  exe_path[length] = '\0';
+  if (strcmp(exe_path, RATHOLE_BIN_PATH) != 0) {
+    return 0;
+  }
+
+  snprintf(proc_path, sizeof(proc_path), "/proc/%ld/cmdline", (long)pid);
+  fd = open(proc_path, O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return 0;
+  }
+  length = read(fd, cmdline, sizeof(cmdline) - 1);
+  close(fd);
+  if (length <= 0) {
+    return 0;
+  }
+  cmdline[length] = '\0';
+
+  /* The first NUL-delimited argument must be the expected executable. */
+  return strcmp(cmdline, RATHOLE_BIN_PATH) == 0;
+}
+
+static int find_rathole_processes(pid_t *pids, size_t max_count) {
+  DIR *proc_dir;
+  struct dirent *entry;
+  int count = 0;
+
+  proc_dir = opendir("/proc");
+  if (!proc_dir) {
+    return 0;
+  }
+
+  while ((entry = readdir(proc_dir)) != NULL) {
+    const char *name = entry->d_name;
+    char *end = NULL;
+    long value;
+
+    if (*name < '0' || *name > '9') {
+      continue;
+    }
+    value = strtol(name, &end, 10);
+    if (!end || *end != '\0' || value <= 1 || value > 2147483647L) {
+      continue;
+    }
+    if (!rathole_process_matches((pid_t)value)) {
+      continue;
+    }
+    if (pids && (size_t)count < max_count) {
+      pids[count] = (pid_t)value;
+    }
+    count++;
+  }
+
+  closedir(proc_dir);
+  return count;
+}
+
+static int rathole_process_alive(pid_t pid) {
+  if (pid <= 1) {
+    return 0;
+  }
+  if (!rathole_process_matches(pid)) {
+    return 0;
+  }
+  return kill(pid, 0) == 0 || errno == EPERM;
+}
+
+static int wait_for_rathole_exit(pid_t pid, int timeout_ms) {
+  int elapsed = 0;
+
+  while (elapsed < timeout_ms) {
+    if (!rathole_process_alive(pid)) {
+      return 0;
+    }
+    usleep(50000);
+    elapsed += 50;
+  }
+  return rathole_process_alive(pid) ? -1 : 0;
+}
 
 /*============================================================================
  * 数据库表创建
@@ -123,6 +233,10 @@ int rathole_init(const char *db_path) {
   /* 加载配置 */
   load_rathole_config();
 
+  /* Mark the module initialized before auto-start so shutdown can reclaim a
+   * client process if the HTTP listener fails later in startup. */
+  g_rathole_initialized = 1;
+
   /* 处理自启动 */
   if (g_current_config.enabled && g_current_config.auto_start) {
     printf("[Rathole] 检测到自启动配置，正在启动服务...\n");
@@ -133,7 +247,6 @@ int rathole_init(const char *db_path) {
     }
   }
 
-  g_rathole_initialized = 1;
   printf("[Rathole] 模块初始化完成\n");
   return 0;
 }
@@ -457,25 +570,32 @@ int rathole_generate_config(void) {
  *============================================================================*/
 
 int rathole_start(void) {
-  char cmd[512];
-  char output[256];
+  pid_t old_pids[16];
+  int old_count;
+  pid_t pid;
+  pid_t parent_pid;
+  int log_fd;
+  int null_fd;
+  FILE *pid_fp;
 
-  /* 先强制停止所有可能存在的rathole进程 */
-  printf("[Rathole] 启动前先清理可能存在的进程...\n");
-  snprintf(cmd, sizeof(cmd), "pkill -9 -f '%s' 2>/dev/null; sleep 0.5",
-           RATHOLE_BIN_PATH);
-  run_command(output, sizeof(output), "sh", "-c", cmd, NULL);
-
-  /* 清理PID文件 */
-  unlink(RATHOLE_PID_PATH);
-
-  /* 再次检查是否已运行 */
-  if (rathole_get_status(NULL) == 1) {
-    printf("[Rathole] 清理后仍有进程运行，再次强制终止\n");
-    snprintf(cmd, sizeof(cmd), "pkill -9 -f '%s'", RATHOLE_BIN_PATH);
-    run_command(output, sizeof(output), "sh", "-c", cmd, NULL);
-    usleep(500000);
+  /* Restarting applies the current database configuration. */
+  printf("[Rathole] 启动前清理已有客户端进程...\n");
+  old_count = find_rathole_processes(old_pids,
+                                     sizeof(old_pids) / sizeof(old_pids[0]));
+  for (int i = 0; i < old_count && i < (int)(sizeof(old_pids) / sizeof(old_pids[0]));
+       i++) {
+    kill(old_pids[i], SIGTERM);
   }
+  for (int i = 0; i < old_count && i < (int)(sizeof(old_pids) / sizeof(old_pids[0]));
+       i++) {
+    if (wait_for_rathole_exit(old_pids[i], 1000) != 0) {
+      kill(old_pids[i], SIGKILL);
+    }
+    /* Reap children started by this process; ECHILD is expected for an
+     * orphaned client that was started by an older server instance. */
+    (void)waitpid(old_pids[i], NULL, 0);
+  }
+  unlink(RATHOLE_PID_PATH);
 
   /* 检查可执行文件 */
   if (access(RATHOLE_BIN_PATH, X_OK) != 0) {
@@ -492,76 +612,109 @@ int rathole_start(void) {
   /* 清空旧日志 */
   rathole_clear_logs();
 
-  /* 启动进程 */
-  snprintf(cmd, sizeof(cmd), "nohup %s %s > %s 2>&1 & echo $!",
-           RATHOLE_BIN_PATH, RATHOLE_CONFIG_PATH, RATHOLE_LOG_PATH);
-
-  if (run_command(output, sizeof(output), "sh", "-c", cmd, NULL) != 0) {
-    printf("[Rathole] 启动命令执行失败\n");
+  /* Start directly with fork/exec.  This keeps the HTTP server independent
+   * from shell job control and avoids matching the shell with pkill -f. */
+  parent_pid = getpid();
+  pid = fork();
+  if (pid < 0) {
+    printf("[Rathole] fork失败: %s\n", strerror(errno));
     return -1;
   }
 
-  /* 保存 PID */
-  int pid = atoi(output);
-  if (pid > 0) {
-    FILE *fp = fopen(RATHOLE_PID_PATH, "w");
-    if (fp) {
-      fprintf(fp, "%d\n", pid);
-      fclose(fp);
+  if (pid == 0) {
+    /* Do not leave a tunnel behind if the management server is terminated. */
+    if (prctl(PR_SET_PDEATHSIG, SIGTERM) == -1 ||
+        getppid() != parent_pid) {
+      _exit(1);
     }
+
+    log_fd = open(RATHOLE_LOG_PATH, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC,
+                  0644);
+    null_fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    if (log_fd < 0 || null_fd < 0) {
+      _exit(127);
+    }
+    if (dup2(log_fd, STDOUT_FILENO) < 0 ||
+        dup2(log_fd, STDERR_FILENO) < 0 ||
+        dup2(null_fd, STDIN_FILENO) < 0) {
+      _exit(127);
+    }
+    close(log_fd);
+    close(null_fd);
+    execl(RATHOLE_BIN_PATH, RATHOLE_BIN_PATH, RATHOLE_CONFIG_PATH,
+          (char *)NULL);
+    _exit(127);
   }
 
-  /* 等待一下检查是否成功启动 */
-  usleep(500000); /* 500ms */
+  /* 保存 PID */
+  pid_fp = fopen(RATHOLE_PID_PATH, "w");
+  if (pid_fp) {
+    fprintf(pid_fp, "%ld\n", (long)pid);
+    fclose(pid_fp);
+  }
 
-  if (rathole_get_status(NULL) == 1) {
+  /* Wait long enough to catch exec/configuration failures. */
+  usleep(500000);
+
+  if (rathole_process_alive(pid)) {
     printf("[Rathole] 服务启动成功, PID=%d\n", pid);
     return 0;
   } else {
+    unlink(RATHOLE_PID_PATH);
     printf("[Rathole] 服务启动后立即退出，请检查日志\n");
     return -1;
   }
 }
 
 int rathole_stop(void) {
-  char cmd[256];
-  char output[128];
+  pid_t pids[16];
+  int count;
+  pid_t saved_pid = -1;
+  FILE *pid_fp;
 
   printf("[Rathole] 停止服务\n");
 
-  /* 使用多种方式确保进程被终止 */
-  /* 方式1: 通过PID文件终止 */
-  FILE *fp = fopen(RATHOLE_PID_PATH, "r");
-  if (fp) {
-    int pid = 0;
-    if (fscanf(fp, "%d", &pid) == 1 && pid > 0) {
-      printf("[Rathole] 从PID文件读取到PID=%d，终止进程\n", pid);
-      kill(pid, SIGTERM);
-      usleep(300000);
-      kill(pid, SIGKILL);
+  /* Read the PID for useful diagnostics, but validate it by /proc before
+   * ever signalling it.  A stale PID must never terminate another process. */
+  pid_fp = fopen(RATHOLE_PID_PATH, "r");
+  if (pid_fp) {
+    long value = -1;
+    if (fscanf(pid_fp, "%ld", &value) == 1 && value > 1 &&
+        value <= 2147483647L) {
+      saved_pid = (pid_t)value;
     }
-    fclose(fp);
+    fclose(pid_fp);
   }
 
-  /* 方式2: 通过pkill终止所有相关进程 */
-  snprintf(cmd, sizeof(cmd), "pkill -f '%s'", RATHOLE_BIN_PATH);
-  run_command(output, sizeof(output), "sh", "-c", cmd, NULL);
-  usleep(300000);
-
-  /* 方式3: 强制终止 */
-  snprintf(cmd, sizeof(cmd), "pkill -9 -f '%s'", RATHOLE_BIN_PATH);
-  run_command(output, sizeof(output), "sh", "-c", cmd, NULL);
-  usleep(300000);
+  count = find_rathole_processes(pids, sizeof(pids) / sizeof(pids[0]));
+  for (int i = 0; i < count && i < (int)(sizeof(pids) / sizeof(pids[0])); i++) {
+    printf("[Rathole] 终止客户端 PID=%ld\n", (long)pids[i]);
+    kill(pids[i], SIGTERM);
+  }
+  if (saved_pid > 1 && rathole_process_matches(saved_pid)) {
+    kill(saved_pid, SIGTERM);
+  }
+  for (int i = 0; i < count && i < (int)(sizeof(pids) / sizeof(pids[0])); i++) {
+    if (wait_for_rathole_exit(pids[i], 1000) != 0) {
+      kill(pids[i], SIGKILL);
+    }
+    /* Reap a child process when this server owns it. */
+    (void)waitpid(pids[i], NULL, 0);
+  }
+  if (saved_pid > 1) {
+    (void)wait_for_rathole_exit(saved_pid, 200);
+    (void)waitpid(saved_pid, NULL, 0);
+  }
 
   /* 清理 PID 文件 */
   unlink(RATHOLE_PID_PATH);
 
-  if (rathole_get_status(NULL) == 0) {
+  if (find_rathole_processes(NULL, 0) == 0) {
     printf("[Rathole] 服务已停止\n");
     return 0;
   } else {
-    printf("[Rathole] 警告：可能仍有进程未完全停止\n");
-    return 0;
+    printf("[Rathole] 警告：仍有客户端进程运行\n");
+    return -1;
   }
 }
 
@@ -572,43 +725,25 @@ int rathole_restart(void) {
 }
 
 int rathole_get_status(RatholeStatus *status) {
-  char output[256] = {0};
-  int running = 0;
+  pid_t pids[16];
+  int count = find_rathole_processes(pids, sizeof(pids) / sizeof(pids[0]));
+  int running = count > 0;
   int pid = -1;
 
-  /*
-   * 方式1: 检查 PID 文件并验证进程是否存在
-   * 最可靠且最快，不依赖任何外部命令
-   */
+  /* Prefer the PID file when it still points at the exact Rathole binary. */
   FILE *fp = fopen(RATHOLE_PID_PATH, "r");
   if (fp) {
-    int saved_pid = 0;
-    if (fscanf(fp, "%d", &saved_pid) == 1 && saved_pid > 0) {
-      /* kill(pid, 0) 检查进程是否存在 - POSIX 标准 */
-      if (kill(saved_pid, 0) == 0) {
-        running = 1;
-        pid = saved_pid;
-      }
+    long saved_pid = -1;
+    if (fscanf(fp, "%ld", &saved_pid) == 1 && saved_pid > 1 &&
+        saved_pid <= 2147483647L && rathole_process_alive((pid_t)saved_pid)) {
+      pid = (int)saved_pid;
+    } else if (running) {
+      pid = (int)pids[0];
     }
     fclose(fp);
   }
-
-  /*
-   * 方式2: 使用 ps + grep 检测（兼容所有 BusyBox）
-   * 注意：不使用 pgrep/pidof/awk，这些命令部分设备不支持
-   */
-  if (!running) {
-    /* 检查是否有 rathole 进程在运行 */
-    if (run_command(output, sizeof(output), "sh", "-c",
-                    "ps | grep '[r]athole' | grep -v grep", NULL) == 0 &&
-        strlen(output) > 0) {
-      running = 1;
-      /* 尝试从输出中提取 PID（第一个数字） */
-      char *p = output;
-      while (*p == ' ')
-        p++; /* 跳过前导空格 */
-      pid = atoi(p);
-    }
+  if (pid < 0 && running) {
+    pid = (int)pids[0];
   }
 
   if (status) {

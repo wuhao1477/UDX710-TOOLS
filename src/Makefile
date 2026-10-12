@@ -1,10 +1,16 @@
 # Makefile for ofono-server - Cross compile for aarch64-linux-gnu
 
 CC = aarch64-linux-gnu-gcc
+# Optional directory containing the target device's glibc runtime files.
+# Set this when building a binary for the device, for example:
+#   make TARGET_GLIBC_DIR=/path/to/target-glibc
+TARGET_GLIBC_DIR ?=
+
 # 移除 -DDISABLE_PRINTF 以启用调试输出
 # 添加 -DDISABLE_PRINTF 禁用所有printf输出
 # 添加 -DMG_ENABLE_IPV6=1 启用IPv6支持
-CFLAGS = -Wall -O2 -g -DMG_ENABLE_LINES=0 -include debug.h -DDISABLE_PRINTF
+# IPv6端点和IPv4管理服务使用同一端口时，IPv6 socket必须只接收IPv6。
+CFLAGS = -Wall -O2 -g -DMG_ENABLE_LINES=0 -DMG_ENABLE_IPV6=1 -DMG_IPV6_V6ONLY=1 -include debug.h -DDISABLE_PRINTF
 
 # GLib 库路径
 GLIB_DIR = ..
@@ -14,22 +20,49 @@ INCLUDES = -I$(GLIB_DIR)/include/glib-2.0 \
            -I. -Iinclude -Iinclude/system -Iinclude/handlers -Iinclude/lib
 
 LDFLAGS = -L$(GLIB_DIR)/lib -Wl,-rpath-link,$(GLIB_DIR)/lib -Wl,--allow-shlib-undefined
-LIBS = -lgio-2.0 -lgobject-2.0 -lglib-2.0 -lgmodule-2.0 -lpthread
+COMMON_LIBS = -lgio-2.0 -lgobject-2.0 -lglib-2.0 -lgmodule-2.0
+
+ifneq ($(strip $(TARGET_GLIBC_DIR)),)
+# The host cross sysroot is newer than the device (glibc 2.27).  Link the
+# executable against the device's libc/pthread and the cross crt objects so
+# the resulting version requirements remain at the device ABI level.
+TARGET_CRT1 = $(shell $(CC) -print-file-name=crt1.o)
+TARGET_CRTI = $(shell $(CC) -print-file-name=crti.o)
+TARGET_CRTBEGIN = $(shell $(CC) -print-file-name=crtbeginS.o)
+TARGET_CRTEND = $(shell $(CC) -print-file-name=crtendS.o)
+TARGET_CRTN = $(shell $(CC) -print-file-name=crtn.o)
+TARGET_LIBGCC = $(shell $(CC) -print-libgcc-file-name)
+LINK_PREFIX = -nostartfiles -nodefaultlibs -pie \
+              $(TARGET_CRT1) $(TARGET_CRTI) $(TARGET_CRTBEGIN)
+LINK_SUFFIX = -L$(TARGET_GLIBC_DIR) \
+              -Wl,-rpath-link,$(TARGET_GLIBC_DIR) \
+              -Wl,--no-as-needed -l:libpthread.so.0 -l:libc.so.6 \
+              -Wl,--as-needed $(TARGET_LIBGCC) $(TARGET_CRTEND) $(TARGET_CRTN)
+else
+# Development-only fallback.  Do not deploy this output to the glibc 2.27
+# device because a newer host libc ABI may be recorded in the ELF.
+LINK_PREFIX =
+LINK_SUFFIX = -Wl,--no-as-needed -l:libpthread.so.0 -Wl,--as-needed
+endif
 
 BUILD_DIR = build
 TARGET = $(BUILD_DIR)/ofono-server
 
 # 源文件分类
-MAIN_SRCS = main.c mongoose.c packed_fs.c
+MAIN_SRCS = main.c mongoose.c packed_fs.c target_glibc_compat.c
 HANDLER_SRCS = handlers/http_server.c handlers/handlers.c
 SYSTEM_SRCS = system/sysinfo.c system/health.c system/modem.c system/airplane.c system/ofono.c \
               system/exec_utils.c system/advanced.c \
               system/traffic.c system/reboot.c system/charge.c system/sms.c system/update.c \
               system/usb_mode.c system/plugin.c system/plugin_storage.c \
               system/sha256.c system/auth.c system/database.c system/apn.c system/json_builder.c \
-              system/netif.c system/rathole.c system/phone_case.c system/ipv6_proxy.c system/security.c
+              system/netif.c system/rathole.c system/phone_case.c system/ipv6_proxy.c system/security.c \
+              system/builtin_card_rules.c system/strict_json.c system/goform_client.c \
+              system/goform_async.c system/builtin_cards.c \
+              system/goform_proxy.c
 SRCS = $(MAIN_SRCS) $(HANDLER_SRCS) $(SYSTEM_SRCS)
 OBJS = $(BUILD_DIR)/main.o $(BUILD_DIR)/mongoose.o $(BUILD_DIR)/packed_fs.o \
+       $(BUILD_DIR)/target_glibc_compat.o \
        $(BUILD_DIR)/http_server.o $(BUILD_DIR)/handlers.o \
        $(BUILD_DIR)/sysinfo.o $(BUILD_DIR)/health.o $(BUILD_DIR)/modem.o $(BUILD_DIR)/airplane.o \
        $(BUILD_DIR)/ofono.o $(BUILD_DIR)/exec_utils.o \
@@ -38,14 +71,17 @@ OBJS = $(BUILD_DIR)/main.o $(BUILD_DIR)/mongoose.o $(BUILD_DIR)/packed_fs.o \
        $(BUILD_DIR)/plugin.o $(BUILD_DIR)/plugin_storage.o \
        $(BUILD_DIR)/sha256.o $(BUILD_DIR)/auth.o $(BUILD_DIR)/database.o $(BUILD_DIR)/apn.o \
        $(BUILD_DIR)/json_builder.o $(BUILD_DIR)/netif.o $(BUILD_DIR)/rathole.o $(BUILD_DIR)/phone_case.o \
-       $(BUILD_DIR)/ipv6_proxy.o $(BUILD_DIR)/security.o
+       $(BUILD_DIR)/ipv6_proxy.o $(BUILD_DIR)/security.o \
+       $(BUILD_DIR)/builtin_card_rules.o $(BUILD_DIR)/strict_json.o \
+       $(BUILD_DIR)/goform_client.o $(BUILD_DIR)/goform_async.o $(BUILD_DIR)/builtin_cards.o \
+       $(BUILD_DIR)/goform_proxy.o
 
 .PHONY: all clean
 
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
+	$(CC) $(CFLAGS) $(LINK_PREFIX) -o $@ $^ $(LDFLAGS) $(COMMON_LIBS) $(LINK_SUFFIX)
 	aarch64-linux-gnu-strip $@
 	@echo "Build complete: $@"
 
@@ -57,6 +93,9 @@ $(BUILD_DIR)/mongoose.o: mongoose.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
 
 $(BUILD_DIR)/packed_fs.o: packed_fs.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
+
+$(BUILD_DIR)/target_glibc_compat.o: target_glibc_compat.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
 
 # handlers 目录
@@ -140,6 +179,24 @@ $(BUILD_DIR)/ipv6_proxy.o: system/ipv6_proxy.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
 
 $(BUILD_DIR)/security.o: system/security.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
+
+$(BUILD_DIR)/builtin_card_rules.o: system/builtin_card_rules.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
+
+$(BUILD_DIR)/strict_json.o: system/strict_json.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
+
+$(BUILD_DIR)/goform_client.o: system/goform_client.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
+
+$(BUILD_DIR)/goform_async.o: system/goform_async.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
+
+$(BUILD_DIR)/builtin_cards.o: system/builtin_cards.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
+
+$(BUILD_DIR)/goform_proxy.o: system/goform_proxy.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
 
 $(BUILD_DIR):

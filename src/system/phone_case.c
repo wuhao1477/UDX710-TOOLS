@@ -27,6 +27,8 @@ static volatile int g_running = 0;      /* 监控线程是否运行 */
 static pthread_t g_monitor_thread;       /* 监控线程 */
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 
+static int phone_case_stop_internal(int persist_config);
+
 /**
  * 检查指定网络接口是否连接
  * @param ifname 接口名称
@@ -151,8 +153,8 @@ void phone_case_init(void) {
  * 清理手机壳模式模块
  */
 void phone_case_deinit(void) {
-    phone_case_stop();
-    pthread_mutex_destroy(&g_lock);
+    /* Process shutdown must not turn off the user's persistent setting. */
+    phone_case_stop_internal(0);
     printf("[PhoneCase] 模块已清理\n");
 }
 
@@ -192,6 +194,10 @@ int phone_case_start(void) {
  * @return 0=成功
  */
 int phone_case_stop(void) {
+    return phone_case_stop_internal(1);
+}
+
+static int phone_case_stop_internal(int persist_config) {
     pthread_mutex_lock(&g_lock);
     
     if (!g_running) {
@@ -207,8 +213,10 @@ int phone_case_stop(void) {
     /* 等待线程退出 */
     pthread_join(g_monitor_thread, NULL);
     
-    /* 保存禁用状态 */
-    config_set_int(PHONE_CASE_KEY, 0);
+    if (persist_config) {
+        /* 保存禁用状态 */
+        config_set_int(PHONE_CASE_KEY, 0);
+    }
     
     printf("[PhoneCase] 监控已停止\n");
     return 0;

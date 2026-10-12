@@ -23,12 +23,14 @@
 #include <glib.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/prctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -43,11 +45,26 @@ static pthread_mutex_t g_ipv6_proxy_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int g_ipv6_proxy_initialized = 0;
 static IPv6ProxyConfig g_current_config = {0};
 static guint g_send_timer_id = 0;
+static guint g_startup_send_timer_id = 0;
 static volatile int g_service_running = 0;
+/* The management listener may share an existing firewall rule.  Only remove
+ * the rule when this module added it itself. */
+static int g_native_firewall_port = 0;
+static int g_native_firewall_owned = 0;
+
+/* The public management address is assigned by the cellular uplink. */
+#define IPV6_PROXY_UPLINK_IFACE "sipa_eth0"
+
+/* Port 6677 is the management service itself.  It is now served by the
+ * native Mongoose IPv6 listener, so the generic proxy must not bind a second
+ * IPv6 socket for the same rule. */
+#define NATIVE_MANAGEMENT_PORT 6677
 
 /* 子进程PID数组 */
 static pid_t g_rule_pids[IPV6_PROXY_MAX_RULES];
 static int g_rule_ids[IPV6_PROXY_MAX_RULES];
+static int g_rule_ports[IPV6_PROXY_MAX_RULES];
+static int g_rule_firewall_owned[IPV6_PROXY_MAX_RULES];
 static int g_rule_count = 0;
 
 /*============================================================================
@@ -74,6 +91,7 @@ static pthread_mutex_t g_ipv6_log_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static int create_ipv6_proxy_tables(void);
 static int load_ipv6_proxy_config(void);
+static int is_management_port_conflict(int local_port, int ipv6_port);
 static void setup_send_timer(void);
 static void cancel_send_timer(void);
 static gboolean send_timer_callback(gpointer user_data);
@@ -90,12 +108,15 @@ static char *proxy_xntop(const struct sockaddr *sa);
 static struct addrinfo *proxy_resolve_host(const char *name, int port,
                                            int hint);
 static void proxy_make_tunnel(int rsock, int local_port);
-static void proxy_rule_process(int ipv6_port, int local_port);
+static void proxy_rule_process(int ipv6_port, int local_port, int ready_fd);
+static void proxy_rule_fail(int ready_fd);
 static void proxy_sigchld_handler(int sig);
+static int proxy_wait_ready(int ready_fd, int timeout_ms);
 
 /* IPv6防火墙规则管理 */
-static void add_ipv6_firewall_rule(int port);
+static int add_ipv6_firewall_rule(int port);
 static void remove_ipv6_firewall_rule(int port);
+static void release_native_firewall_rule(void);
 
 /*============================================================================
  * 6tunnel内置代码 - 工具函数
@@ -330,8 +351,15 @@ static void proxy_sigchld_handler(int sig) {
   signal(SIGCHLD, proxy_sigchld_handler);
 }
 
-static void proxy_rule_process(int ipv6_port, int local_port) {
+static void proxy_rule_fail(int ready_fd) {
+  if (ready_fd >= 0)
+    close(ready_fd);
+  _exit(1);
+}
+
+static void proxy_rule_process(int ipv6_port, int local_port, int ready_fd) {
   int listen_fd, jeden = 1;
+  int v6only = 1;
   struct addrinfo *ai;
   struct addrinfo *ai_ptr;
 
@@ -343,7 +371,7 @@ static void proxy_rule_process(int ipv6_port, int local_port) {
 
   if (ai == NULL) {
     printf("[IPv6Proxy] 无法解析监听地址\n");
-    exit(1);
+    proxy_rule_fail(ready_fd);
   }
 
   /* 创建socket */
@@ -352,7 +380,7 @@ static void proxy_rule_process(int ipv6_port, int local_port) {
   if (listen_fd == -1) {
     perror("[IPv6Proxy] socket");
     freeaddrinfo(ai);
-    exit(1);
+    proxy_rule_fail(ready_fd);
   }
 
   if (setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &jeden, sizeof(jeden)) ==
@@ -360,7 +388,17 @@ static void proxy_rule_process(int ipv6_port, int local_port) {
     perror("[IPv6Proxy] setsockopt");
     close(listen_fd);
     freeaddrinfo(ai);
-    exit(1);
+    proxy_rule_fail(ready_fd);
+  }
+
+  /* Keep the IPv6 endpoint independent from the IPv4 service on the same
+   * port.  Linux otherwise creates a dual-stack socket by default. */
+  if (setsockopt(listen_fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only,
+                 sizeof(v6only)) == -1) {
+    perror("[IPv6Proxy] setsockopt IPV6_V6ONLY");
+    close(listen_fd);
+    freeaddrinfo(ai);
+    proxy_rule_fail(ready_fd);
   }
 
   /* 绑定 */
@@ -371,7 +409,7 @@ static void proxy_rule_process(int ipv6_port, int local_port) {
       perror("[IPv6Proxy] bind");
       close(listen_fd);
       freeaddrinfo(ai);
-      exit(1);
+      proxy_rule_fail(ready_fd);
     }
   }
 
@@ -381,10 +419,18 @@ static void proxy_rule_process(int ipv6_port, int local_port) {
   if (listen(listen_fd, 100) == -1) {
     perror("[IPv6Proxy] listen");
     close(listen_fd);
-    exit(1);
+    proxy_rule_fail(ready_fd);
   }
 
   printf("[IPv6Proxy] 开始监听IPv6端口 %d\n", ipv6_port);
+
+  /* Tell the parent only after bind + listen succeeded. */
+  if (ready_fd >= 0) {
+    const char ready = 'R';
+    (void)write(ready_fd, &ready, sizeof(ready));
+    close(ready_fd);
+    ready_fd = -1;
+  }
 
   /* 设置子进程信号处理 */
   signal(SIGCHLD, proxy_sigchld_handler);
@@ -432,11 +478,19 @@ static void proxy_rule_process(int ipv6_port, int local_port) {
 
     if (ret == 0) {
       /* 子进程处理连接 */
+      pid_t listener_pid = getppid();
+      if (prctl(PR_SET_PDEATHSIG, SIGTERM) == -1 ||
+          getppid() != listener_pid) {
+        close(client_fd);
+        if (client_addr)
+          free(client_addr);
+        _exit(1);
+      }
       close(listen_fd);
       proxy_make_tunnel(client_fd, local_port);
       if (client_addr)
         free(client_addr);
-      exit(0);
+      _exit(0);
     }
 
     /* 父进程 */
@@ -446,7 +500,26 @@ static void proxy_rule_process(int ipv6_port, int local_port) {
   }
 
   close(listen_fd);
-  exit(0);
+  _exit(0);
+}
+
+static int proxy_wait_ready(int ready_fd, int timeout_ms) {
+  struct pollfd pfd = {0};
+  char ready = 0;
+  ssize_t n;
+  int result;
+
+  pfd.fd = ready_fd;
+  pfd.events = POLLIN | POLLHUP | POLLERR;
+  do {
+    result = poll(&pfd, 1, timeout_ms);
+  } while (result < 0 && errno == EINTR);
+
+  if (result <= 0)
+    return -1;
+
+  n = read(ready_fd, &ready, sizeof(ready));
+  return n == (ssize_t)sizeof(ready) && ready == 'R' ? 0 : -1;
 }
 
 /*============================================================================
@@ -588,6 +661,7 @@ static gboolean send_timer_callback(gpointer user_data) {
 /* 开机延迟发送回调（一次性） */
 static gboolean send_startup_ipv6_callback(gpointer user_data) {
   (void)user_data;
+  g_startup_send_timer_id = 0;
   printf("[IPv6Proxy] 设备已启动15秒，开始发送IPv6地址\n");
   do_send_ipv6(1);        /* 失败重试 */
   return G_SOURCE_REMOVE; /* 只执行一次 */
@@ -612,6 +686,14 @@ static void cancel_send_timer(void) {
     g_source_remove(g_send_timer_id);
     g_send_timer_id = 0;
     printf("[IPv6Proxy] 定时器已取消\n");
+  }
+}
+
+static void cancel_startup_send_timer(void) {
+  if (g_startup_send_timer_id > 0) {
+    g_source_remove(g_startup_send_timer_id);
+    g_startup_send_timer_id = 0;
+    printf("[IPv6Proxy] 开机发送定时器已取消\n");
   }
 }
 
@@ -877,6 +959,8 @@ int ipv6_proxy_init(const char *db_path) {
   /* 初始化PID数组 */
   memset(g_rule_pids, 0, sizeof(g_rule_pids));
   memset(g_rule_ids, 0, sizeof(g_rule_ids));
+  memset(g_rule_ports, 0, sizeof(g_rule_ports));
+  memset(g_rule_firewall_owned, 0, sizeof(g_rule_firewall_owned));
   g_rule_count = 0;
 
   /* 初始化日志计数 */
@@ -887,6 +971,10 @@ int ipv6_proxy_init(const char *db_path) {
 
   /* 加载配置 */
   load_ipv6_proxy_config();
+
+  /* Mark the module ready before auto-start so a later startup failure can
+   * still run the normal deinitialization path. */
+  g_ipv6_proxy_initialized = 1;
 
   /* 处理自启动 */
   if (g_current_config.enabled && g_current_config.auto_start) {
@@ -905,24 +993,28 @@ int ipv6_proxy_init(const char *db_path) {
   if (g_current_config.send_enabled &&
       strlen(g_current_config.webhook_url) > 0) {
     printf("[IPv6Proxy] 开机后15秒发送IPv6地址\n");
-    g_timeout_add_seconds(120, (GSourceFunc)send_startup_ipv6_callback, NULL);
+    g_startup_send_timer_id =
+        g_timeout_add_seconds(120, (GSourceFunc)send_startup_ipv6_callback,
+                              NULL);
   }
 
-  g_ipv6_proxy_initialized = 1;
   printf("[IPv6Proxy] 模块初始化完成\n");
   return 0;
 }
 
 void ipv6_proxy_deinit(void) {
   if (!g_ipv6_proxy_initialized) {
+    release_native_firewall_rule();
     return;
   }
 
   /* 取消定时器 */
   cancel_send_timer();
+  cancel_startup_send_timer();
 
   /* 停止服务 */
   ipv6_proxy_stop();
+  release_native_firewall_rule();
 
   g_ipv6_proxy_initialized = 0;
   printf("[IPv6Proxy] 模块已清理\n");
@@ -1078,7 +1170,8 @@ int ipv6_proxy_rule_add(int local_port, int ipv6_port) {
   char sql[512];
 
   if (local_port <= 0 || local_port > 65535 || ipv6_port <= 0 ||
-      ipv6_port > 65535) {
+      ipv6_port > 65535 ||
+      is_management_port_conflict(local_port, ipv6_port)) {
     printf("[IPv6Proxy] 端口参数无效\n");
     return -1;
   }
@@ -1112,7 +1205,8 @@ int ipv6_proxy_rule_update(int id, int local_port, int ipv6_port, int enabled) {
   char sql[512];
 
   if (id <= 0 || local_port <= 0 || local_port > 65535 || ipv6_port <= 0 ||
-      ipv6_port > 65535) {
+      ipv6_port > 65535 ||
+      is_management_port_conflict(local_port, ipv6_port)) {
     return -1;
   }
 
@@ -1156,19 +1250,29 @@ int ipv6_proxy_rule_delete(int id) {
  * IPv6防火墙规则管理
  *============================================================================*/
 
-static void add_ipv6_firewall_rule(int port) {
-  char cmd[256];
-  /* 先检查规则是否存在，不存在则添加 */
-  snprintf(cmd, sizeof(cmd),
-           "ip6tables -C INPUT -p tcp --dport %d -j ACCEPT 2>/dev/null || "
-           "ip6tables -A INPUT -p tcp --dport %d -j ACCEPT",
-           port, port);
-  int ret = system(cmd);
-  if (ret == 0) {
-    printf("[IPv6Proxy] 添加防火墙规则: 端口 %d\n", port);
-  } else {
-    printf("[IPv6Proxy] 添加防火墙规则失败: 端口 %d (ret=%d)\n", port, ret);
+static int add_ipv6_firewall_rule(int port) {
+  char check_cmd[256];
+  char add_cmd[256];
+
+  /* Check and add separately so ownership is known to the caller. */
+  snprintf(check_cmd, sizeof(check_cmd),
+           "ip6tables -C INPUT -p tcp --dport %d -j ACCEPT 2>/dev/null",
+           port);
+  if (system(check_cmd) == 0) {
+    printf("[IPv6Proxy] 防火墙规则已存在: 端口 %d\n", port);
+    return 0;
   }
+
+  snprintf(add_cmd, sizeof(add_cmd),
+           "ip6tables -A INPUT -p tcp --dport %d -j ACCEPT 2>/dev/null",
+           port);
+  if (system(add_cmd) == 0) {
+    printf("[IPv6Proxy] 添加防火墙规则: 端口 %d\n", port);
+    return 1;
+  }
+
+  printf("[IPv6Proxy] 添加防火墙规则失败: 端口 %d\n", port);
+  return -1;
 }
 
 static void remove_ipv6_firewall_rule(int port) {
@@ -1176,7 +1280,46 @@ static void remove_ipv6_firewall_rule(int port) {
   snprintf(cmd, sizeof(cmd),
            "ip6tables -D INPUT -p tcp --dport %d -j ACCEPT 2>/dev/null", port);
   int ret = system(cmd);
+  (void)ret;
   printf("[IPv6Proxy] 删除防火墙规则: 端口 %d (ret=%d)\n", port, ret);
+}
+
+static int is_native_management_rule(const IPv6ProxyRule *rule) {
+  return rule != NULL && rule->local_port == NATIVE_MANAGEMENT_PORT &&
+         rule->ipv6_port == NATIVE_MANAGEMENT_PORT;
+}
+
+static int is_management_port_conflict(int local_port, int ipv6_port) {
+  return (local_port == NATIVE_MANAGEMENT_PORT ||
+          ipv6_port == NATIVE_MANAGEMENT_PORT) &&
+         !(local_port == NATIVE_MANAGEMENT_PORT &&
+           ipv6_port == NATIVE_MANAGEMENT_PORT);
+}
+
+static void release_native_firewall_rule(void) {
+  if (g_native_firewall_owned && g_native_firewall_port > 0) {
+    remove_ipv6_firewall_rule(g_native_firewall_port);
+  }
+  g_native_firewall_port = 0;
+  g_native_firewall_owned = 0;
+}
+
+void ipv6_proxy_allow_port(int port) {
+  int result;
+
+  if (port <= 0 || port > 65535) {
+    return;
+  }
+  if (g_native_firewall_port == port) {
+    return;
+  }
+
+  release_native_firewall_rule();
+  result = add_ipv6_firewall_rule(port);
+  if (result >= 0) {
+    g_native_firewall_port = port;
+    g_native_firewall_owned = result == 1;
+  }
 }
 
 /*============================================================================
@@ -1186,6 +1329,8 @@ static void remove_ipv6_firewall_rule(int port) {
 int ipv6_proxy_start(void) {
   IPv6ProxyRule rules[IPV6_PROXY_MAX_RULES];
   int count;
+  int startup_failed = 0;
+  int native_rule_enabled = 0;
 
   if (g_service_running) {
     printf("[IPv6Proxy] 服务已在运行中\n");
@@ -1218,6 +1363,21 @@ int ipv6_proxy_start(void) {
       continue;
     }
 
+    if (is_management_port_conflict(rules[i].local_port,
+                                     rules[i].ipv6_port)) {
+      printf("[IPv6Proxy] 规则 %d 占用管理端口但目标本地端口不是 %d，拒绝启动\n",
+             rules[i].id, NATIVE_MANAGEMENT_PORT);
+      startup_failed = 1;
+      break;
+    }
+
+    if (is_native_management_rule(&rules[i])) {
+      native_rule_enabled = 1;
+      printf("[IPv6Proxy] 规则 %d 使用管理服务原生 IPv6 listener，跳过代理子进程\n",
+             rules[i].id);
+      continue;
+    }
+
     /* 保存当前规则的端口信息 */
     int cur_ipv6_port = rules[i].ipv6_port;
     int cur_local_port = rules[i].local_port;
@@ -1226,37 +1386,86 @@ int ipv6_proxy_start(void) {
     printf("[IPv6Proxy] 准备启动规则 %d: IPv6端口 %d -> 本地端口 %d\n", cur_id,
            cur_ipv6_port, cur_local_port);
 
+    int ready_pipe[2];
+    if (pipe(ready_pipe) != 0) {
+      printf("[IPv6Proxy] 创建启动同步管道失败: %s\n", strerror(errno));
+      startup_failed = 1;
+      break;
+    }
+
+    pid_t parent_pid = getpid();
     pid_t pid = fork();
 
     if (pid == -1) {
       printf("[IPv6Proxy] fork失败: %s\n", strerror(errno));
-      continue;
+      close(ready_pipe[0]);
+      close(ready_pipe[1]);
+      startup_failed = 1;
+      break;
     }
 
     if (pid == 0) {
+      /* Do not leave an IPv6 listener behind if the HTTP parent dies. */
+      if (prctl(PR_SET_PDEATHSIG, SIGTERM) == -1 || getppid() != parent_pid) {
+        _exit(1);
+      }
+      close(ready_pipe[0]);
       /* 子进程 - 使用保存的局部变量 */
       printf("[IPv6Proxy] 子进程启动 (PID=%d): IPv6端口 %d -> 本地端口 %d\n",
              getpid(), cur_ipv6_port, cur_local_port);
-      proxy_rule_process(cur_ipv6_port, cur_local_port);
-      exit(0); /* 不应该到达这里 */
+      proxy_rule_process(cur_ipv6_port, cur_local_port, ready_pipe[1]);
+      _exit(0); /* 不应该到达这里 */
     }
 
-    /* 父进程记录PID */
+    close(ready_pipe[1]);
+    if (proxy_wait_ready(ready_pipe[0], 2000) != 0) {
+      printf("[IPv6Proxy] 规则 %d 启动失败，IPv6端口 %d 未监听\n", cur_id,
+             cur_ipv6_port);
+      close(ready_pipe[0]);
+      kill(pid, SIGKILL);
+      waitpid(pid, NULL, 0);
+      startup_failed = 1;
+      break;
+    }
+    close(ready_pipe[0]);
+
+    /* Record only a child that confirmed its listening socket. */
     g_rule_pids[g_rule_count] = pid;
     g_rule_ids[g_rule_count] = cur_id;
+    g_rule_ports[g_rule_count] = cur_ipv6_port;
+    g_rule_firewall_owned[g_rule_count] =
+        add_ipv6_firewall_rule(cur_ipv6_port) == 1;
     g_rule_count++;
 
     printf("[IPv6Proxy] 规则 %d 启动，PID=%d\n", cur_id, pid);
 
-    /* 添加IPv6防火墙规则 */
-    add_ipv6_firewall_rule(cur_ipv6_port);
-
     /* 短暂延迟，确保子进程开始监听 */
-    usleep(100000); /* 100ms */
+    usleep(10000); /* 10ms */
+  }
+
+  if (startup_failed || (g_rule_count == 0 && !native_rule_enabled)) {
+    for (int i = 0; i < g_rule_count; i++) {
+      if (g_rule_pids[i] > 0) {
+        if (g_rule_firewall_owned[i]) {
+          remove_ipv6_firewall_rule(g_rule_ports[i]);
+        }
+        kill(g_rule_pids[i], SIGKILL);
+        waitpid(g_rule_pids[i], NULL, 0);
+      }
+    }
+    memset(g_rule_pids, 0, sizeof(g_rule_pids));
+    memset(g_rule_ids, 0, sizeof(g_rule_ids));
+    memset(g_rule_ports, 0, sizeof(g_rule_ports));
+    memset(g_rule_firewall_owned, 0, sizeof(g_rule_firewall_owned));
+    g_rule_count = 0;
+    g_service_running = 0;
+    printf("[IPv6Proxy] 服务启动失败，已回滚已启动规则\n");
+    return -1;
   }
 
   g_service_running = 1;
-  printf("[IPv6Proxy] 服务启动完成，共启动 %d 个进程\n", g_rule_count);
+  printf("[IPv6Proxy] 服务启动完成，共启动 %d 个代理进程，原生管理端口=%s\n",
+         g_rule_count, native_rule_enabled ? "是" : "否");
   return 0;
 }
 
@@ -1268,23 +1477,15 @@ int ipv6_proxy_stop(void) {
 
   printf("[IPv6Proxy] 停止服务\n");
 
-  /* 获取规则列表以删除防火墙规则 */
-  IPv6ProxyRule rules[IPV6_PROXY_MAX_RULES];
-  int count = ipv6_proxy_rule_list(rules, IPV6_PROXY_MAX_RULES);
-
-  /* 删除所有启用规则的防火墙规则 */
-  for (int i = 0; i < count; i++) {
-    if (rules[i].enabled) {
-      remove_ipv6_firewall_rule(rules[i].ipv6_port);
-    }
-  }
-
   /* 直接强制终止所有子进程 */
   for (int i = 0; i < g_rule_count; i++) {
     if (g_rule_pids[i] > 0) {
       printf("[IPv6Proxy] 强制终止进程 PID=%d\n", g_rule_pids[i]);
+      if (g_rule_firewall_owned[i]) {
+        remove_ipv6_firewall_rule(g_rule_ports[i]);
+      }
       kill(g_rule_pids[i], SIGKILL);
-      waitpid(g_rule_pids[i], NULL, WNOHANG);
+      waitpid(g_rule_pids[i], NULL, 0);
     }
   }
 
@@ -1294,6 +1495,8 @@ int ipv6_proxy_stop(void) {
   /* 清理状态 */
   memset(g_rule_pids, 0, sizeof(g_rule_pids));
   memset(g_rule_ids, 0, sizeof(g_rule_ids));
+  memset(g_rule_ports, 0, sizeof(g_rule_ports));
+  memset(g_rule_firewall_owned, 0, sizeof(g_rule_firewall_owned));
   g_rule_count = 0;
   g_service_running = 0;
 
@@ -1309,6 +1512,9 @@ int ipv6_proxy_restart(void) {
 
 int ipv6_proxy_get_status(IPv6ProxyStatus *status) {
   if (status) {
+    IPv6ProxyRule rules[IPV6_PROXY_MAX_RULES];
+    int count;
+
     memset(status, 0, sizeof(IPv6ProxyStatus));
     status->running = g_service_running;
     status->active_count = g_rule_count;
@@ -1316,6 +1522,14 @@ int ipv6_proxy_get_status(IPv6ProxyStatus *status) {
     /* 获取规则总数 */
     const char *sql = "SELECT COUNT(*) FROM ipv6_proxy_rules;";
     status->rule_count = db_query_int(sql, 0);
+
+    /* 6677 is served by the native HTTP listener rather than a proxy child. */
+    count = ipv6_proxy_rule_list(rules, IPV6_PROXY_MAX_RULES);
+    for (int i = 0; i < count; i++) {
+      if (rules[i].enabled && is_native_management_rule(&rules[i])) {
+        status->active_count++;
+      }
+    }
 
     /* 获取IPv6地址 */
     ipv6_proxy_get_ipv6_addr(status->ipv6_addr, sizeof(status->ipv6_addr));
@@ -1330,8 +1544,10 @@ int ipv6_proxy_get_status(IPv6ProxyStatus *status) {
 
 int ipv6_proxy_get_ipv6_addr(char *addr, size_t size) {
   char output[2048] = {0};
-  char cmd[] = "ip -6 addr show scope global | grep inet6 | awk '{print $2}' | "
-               "cut -d'/' -f1 | head -n1";
+  const char *cmd = "ip -6 addr show dev " IPV6_PROXY_UPLINK_IFACE
+                    " scope global | grep inet6 | awk '{print $2}' | "
+                    "cut -d'/' -f1 | head -n1";
+  size_t length;
 
   if (!addr || size == 0) {
     return -1;
@@ -1344,15 +1560,15 @@ int ipv6_proxy_get_ipv6_addr(char *addr, size_t size) {
     return -1;
   }
 
-  /* 去除换行符 */
-  char *nl = strchr(output, '\n');
-  if (nl)
-    *nl = '\0';
-
-  if (strlen(output) > 0) {
-    strncpy(addr, output, size - 1);
-    addr[size - 1] = '\0';
+  length = strlen(output);
+  while (length > 0 && (output[length - 1] == '\n' ||
+                         output[length - 1] == '\r' ||
+                         output[length - 1] == ' ' ||
+                         output[length - 1] == '\t')) {
+    output[--length] = '\0';
   }
+  strncpy(addr, output, size - 1);
+  addr[size - 1] = '\0';
 
   return 0;
 }

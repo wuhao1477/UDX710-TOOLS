@@ -200,6 +200,34 @@
     switchFailed: '切换失败'
   },
 
+  // 内置卡运营商管理
+  builtinCard: {
+    title: '运营商与内置卡',
+    description: '实名校验通过后，可通过设备本地服务切换运营商。',
+    current: '当前：{carrier}',
+    unknownCarrier: '未知运营商',
+    refresh: '刷新',
+    loading: '正在读取内置卡...',
+    unsupported: '当前设备不是已确认的 SZ50 设备，未启用内置卡运营商切换。',
+    empty: '当前没有可用的内置卡。',
+    ready: '卡已就绪',
+    unavailable: '卡不可用',
+    iccid: 'ICCID',
+    realName: '实名状态',
+    verifiedShort: '已实名',
+    notVerifiedShort: '未实名',
+    checkRealName: '实名校验',
+    switch: '切换至此卡',
+    verified: '实名状态：已实名',
+    notVerified: '该内置卡尚未实名',
+    realNameFailed: '实名状态查询失败',
+    loadFailed: '读取内置卡失败',
+    confirmTitle: '确认切换运营商',
+    confirmMessage: '将切换到{carrier}，设备会短暂断网并重新注册。',
+    switched: '已请求切换到{carrier}',
+    switchFailed: '运营商切换失败'
+  },
+
   // APN配置模块
   apn: {
     title: 'APN配置',
@@ -1335,5 +1363,4 @@
     factoryResetFailed: '恢复出厂设置失败'
   }
 }
-
 
